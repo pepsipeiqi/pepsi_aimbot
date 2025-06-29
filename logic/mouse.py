@@ -10,6 +10,9 @@ from logic.shooting import shooting
 from logic.buttons import Buttons
 from logic.logger import logger
 
+# Import new PID-based mouse controller
+from mouse.mouse_controller import MouseController, MovementAlgorithm
+
 if cfg.mouse_rzr:
     from logic.rzctl import RZCONTROL
 
@@ -20,6 +23,7 @@ class MouseThread:
     def __init__(self):
         self.initialize_parameters()
         self.setup_hardware()
+        self.setup_pid_controller()
 
     def initialize_parameters(self):
         self.dpi = cfg.mouse_dpi
@@ -63,6 +67,21 @@ class MouseThread:
             self.rzr = RZCONTROL(dll_path)
             if not self.rzr.init():
                 logger.error("Failed to initialize rzctl")
+    
+    def setup_pid_controller(self):
+        """Initialize the PID-based mouse controller"""
+        try:
+            self.mouse_controller = MouseController()
+            if self.mouse_controller.initialize_driver():
+                logger.info("PID mouse controller initialized successfully")
+                self.pid_enabled = True
+            else:
+                logger.warning("Failed to initialize PID mouse controller, falling back to legacy methods")
+                self.pid_enabled = False
+        except Exception as e:
+            logger.error(f"Error initializing PID mouse controller: {e}")
+            self.pid_enabled = False
+            self.mouse_controller = None
 
     def process_data(self, data):
         if isinstance(data, sv.Detections):
@@ -196,6 +215,24 @@ class MouseThread:
         shooting_state = self.get_shooting_key_state()
 
         if shooting_state or cfg.mouse_auto_aim:
+            # 使用修复后的PID控制器进行相对移动
+            if self.pid_enabled and self.mouse_controller:
+                try:
+                    # 使用相对移动，直接传入计算好的偏移量，和原有win32api行为一致
+                    success = self.mouse_controller.move_relative(int(x), int(y))
+                    
+                    if success:
+                        # 只在第一次成功时记录，避免日志过多
+                        if not hasattr(self, '_pid_success_logged'):
+                            logger.info("🎯 PID relative movement initialized successfully")
+                            self._pid_success_logged = True
+                        return
+                    else:
+                        logger.warning("🎯 PID relative movement failed, falling back to legacy method")
+                except Exception as e:
+                    logger.error(f"🎯 PID relative movement error: {e}, falling back to legacy method")
+            
+            # Fall back to legacy mouse control methods
             if not cfg.mouse_ghub and not cfg.arduino_move and not cfg.mouse_rzr:
                 win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, int(x), int(y), 0, 0)
             elif cfg.mouse_ghub:
@@ -234,6 +271,22 @@ class MouseThread:
         self.screen_height = cfg.detection_window_height
         self.center_x = self.screen_width / 2
         self.center_y = self.screen_height / 2
+        
+        # Reinitialize PID controller with updated settings
+        self.setup_pid_controller()
+    
+    def cleanup(self):
+        """Clean up resources when mouse controller is no longer needed"""
+        if hasattr(self, 'mouse_controller') and self.mouse_controller:
+            try:
+                self.mouse_controller.cleanup()
+                logger.info("PID mouse controller cleaned up")
+            except Exception as e:
+                logger.error(f"Error cleaning up PID mouse controller: {e}")
+    
+    def __del__(self):
+        """Destructor to ensure cleanup"""
+        self.cleanup()
 
     def visualize_target(self, target_x, target_y, target_cls):
         if (cfg.show_window and cfg.show_target_line) or (cfg.show_overlay and cfg.show_target_line):
@@ -246,5 +299,37 @@ class MouseThread:
     def visualize_history(self, target_x, target_y):
         if (cfg.show_window and cfg.show_history_points) or (cfg.show_overlay and cfg.show_history_points):
             visuals.draw_history_point_add_point(target_x, target_y)
+
+# Optimized PID presets for different scenarios
+class OptimizedPIDPresets:
+    # FPS游戏精确瞄准场景
+    FPS_AIMING = {
+        'tolerance': 2,        # 平衡精度与速度
+        'max_iterations': 50   # 快速收敛
+    }
+    
+    # FPS游戏快速转身场景
+    FPS_QUICK_TURN = {
+        'tolerance': 15,       # 优先速度
+        'max_iterations': 30   # 极速响应
+    }
+    
+    # FPS游戏目标追踪场景
+    FPS_TRACKING = {
+        'tolerance': 12,       # 快速跟踪
+        'max_iterations': 25   # 实时响应
+    }
+    
+    # FPS游戏压枪控制场景
+    FPS_RECOIL_CONTROL = {
+        'tolerance': 8,        # 快速补偿
+        'max_iterations': 15   # 射击节奏匹配
+    }
+    
+    # FPS游戏综合战斗场景
+    FPS_COMBAT = {
+        'tolerance': 10,       # 平衡性能
+        'max_iterations': 40   # 稳定输出
+    }
 
 mouse = MouseThread()

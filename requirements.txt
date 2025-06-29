@@ -14,3 +14,4 @@ ultralytics
 keyboard
 mss
 supervision
+pyautogui>=0.9.54
