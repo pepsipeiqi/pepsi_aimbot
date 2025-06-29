@@ -14,23 +14,23 @@
 ### 基础使用（推荐）
 
 ```python
-from mouse_controller import MouseController
+from mouse.mouse_controller import MouseController
 
 # 创建控制器实例
 controller = MouseController()
 
 # 初始化驱动
 if controller.initialize_driver():
-    # 使用PID算法移动鼠标（默认）
-    success = controller.smooth_move_to(100, 100)
-    
-    if success:
-        print("移动成功")
-    else:
-        print("移动失败")
-    
-    # 清理资源
-    controller.cleanup()
+   # 使用PID算法移动鼠标（默认）
+   success = controller.smooth_move_to(100, 100)
+
+   if success:
+      print("移动成功")
+   else:
+      print("移动失败")
+
+   # 清理资源
+   controller.cleanup()
 ```
 
 ### 上下文管理器使用（推荐）
@@ -53,8 +53,8 @@ with MouseController() as controller:
 ### 1. 导入必要模块
 
 ```python
-from mouse_controller import MouseController, MovementAlgorithm
-from mouse_controller.algorithms.pid_controller import PIDController, pid_mouse_move
+from mouse.mouse_controller import MouseController, MovementAlgorithm
+from mouse.mouse_controller.algorithms import PIDController, pid_mouse_move
 ```
 
 ### 2. 基础PID移动
@@ -247,86 +247,88 @@ from typing import Optional, Tuple
 # 添加模块路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'mouse_controller'))
 
-from mouse_controller import MouseController, MovementAlgorithm
+from mouse.mouse_controller import MouseController, MovementAlgorithm
+
 
 class SimplePIDMouseControl:
-    """简化的PID鼠标控制器，用于项目集成"""
-    
-    def __init__(self, driver_path: Optional[str] = None):
-        self.controller = MouseController(driver_path=driver_path)
-        self.initialized = False
-    
-    def initialize(self) -> bool:
-        """初始化控制器"""
-        self.initialized = self.controller.initialize_driver()
-        return self.initialized
-    
-    def move_to(self, x: int, y: int, precision: str = "normal") -> bool:
-        """
-        移动鼠标到指定位置
-        
-        Args:
-            x: 目标X坐标
-            y: 目标Y坐标  
-            precision: 精度级别 ("high", "normal", "fast")
-        
-        Returns:
-            bool: 移动是否成功
-        """
-        if not self.initialized:
-            return False
-        
-        # 根据精度需求选择参数
-        precision_config = {
-            "high": {"tolerance": 1, "max_iterations": 200},
-            "normal": {"tolerance": 3, "max_iterations": 100},
-            "fast": {"tolerance": 5, "max_iterations": 50}
-        }
-        
-        config = precision_config.get(precision, precision_config["normal"])
-        
-        return self.controller.smooth_move_to(
-            x, y, 
-            algorithm=MovementAlgorithm.PID,
-            **config
-        )
-    
-    def click_at(self, x: int, y: int, precision: str = "normal") -> bool:
-        """移动并点击"""
-        if self.move_to(x, y, precision):
-            return self.controller.click()
-        return False
-    
-    def get_position(self) -> Tuple[int, int]:
-        """获取当前鼠标位置"""
-        return self.controller.get_current_position()
-    
-    def cleanup(self):
-        """清理资源"""
-        if self.controller:
-            self.controller.cleanup()
-    
-    def __enter__(self):
-        if not self.initialize():
-            raise RuntimeError("Failed to initialize mouse controller")
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cleanup()
+   """简化的PID鼠标控制器，用于项目集成"""
+
+   def __init__(self, driver_path: Optional[str] = None):
+      self.controller = MouseController(driver_path=driver_path)
+      self.initialized = False
+
+   def initialize(self) -> bool:
+      """初始化控制器"""
+      self.initialized = self.controller.initialize_driver()
+      return self.initialized
+
+   def move_to(self, x: int, y: int, precision: str = "normal") -> bool:
+      """
+      移动鼠标到指定位置
+      
+      Args:
+          x: 目标X坐标
+          y: 目标Y坐标  
+          precision: 精度级别 ("high", "normal", "fast")
+      
+      Returns:
+          bool: 移动是否成功
+      """
+      if not self.initialized:
+         return False
+
+      # 根据精度需求选择参数
+      precision_config = {
+         "high": {"tolerance": 1, "max_iterations": 200},
+         "normal": {"tolerance": 3, "max_iterations": 100},
+         "fast": {"tolerance": 5, "max_iterations": 50}
+      }
+
+      config = precision_config.get(precision, precision_config["normal"])
+
+      return self.controller.smooth_move_to(
+         x, y,
+         algorithm=MovementAlgorithm.PID,
+         **config
+      )
+
+   def click_at(self, x: int, y: int, precision: str = "normal") -> bool:
+      """移动并点击"""
+      if self.move_to(x, y, precision):
+         return self.controller.click()
+      return False
+
+   def get_position(self) -> Tuple[int, int]:
+      """获取当前鼠标位置"""
+      return self.controller.get_current_position()
+
+   def cleanup(self):
+      """清理资源"""
+      if self.controller:
+         self.controller.cleanup()
+
+   def __enter__(self):
+      if not self.initialize():
+         raise RuntimeError("Failed to initialize mouse controller")
+      return self
+
+   def __exit__(self, exc_type, exc_val, exc_tb):
+      self.cleanup()
+
 
 # 使用示例
 if __name__ == "__main__":
-    with SimplePIDMouseControl() as mouse:
-        # 高精度移动
-        mouse.move_to(100, 100, "high")
-        time.sleep(0.5)
-        
-        # 点击操作
-        mouse.click_at(200, 200, "normal")
-        time.sleep(0.5)
-        
-        # 快速移动
-        mouse.move_to(300, 300, "fast")
+   with SimplePIDMouseControl() as mouse:
+      # 高精度移动
+      mouse.move_to(100, 100, "high")
+      time.sleep(0.5)
+
+      # 点击操作
+      mouse.click_at(200, 200, "normal")
+      time.sleep(0.5)
+
+      # 快速移动
+      mouse.move_to(300, 300, "fast")
 ```
 
 ### 步骤4：配置文件适配
