@@ -33,7 +33,7 @@ class SimpleTarget:
         self.velocity_y = 0.0
     
     def calculate_aim_point(self):
-        """Phase 3: 精确头部瞄准点计算 - 基于尺寸和距离动态调整"""
+        """Phase 3.9修正: 修正头部瞄准点 - 远距离向上2%，中距离向上2%，近距离保持"""
         if self.cls == 7:  # 头部目标
             # Phase 3: 智能头部瞄准点计算
             from logic.capture import capture
@@ -43,11 +43,11 @@ class SimpleTarget:
             
             # 基于距离动态调整瞄准点
             if distance_to_center > 50:  # 远距离 - 瞄准头部中心
-                y_offset_ratio = 0.1  # 轻微向下偏移
+                y_offset_ratio = 0.0793  # 0.081 - (0.081 * 0.02) = 0.0793，减少2%向下偏移（向上2%）
             elif distance_to_center > 20:  # 中距离 - 精确瞄准
-                y_offset_ratio = 0.15  # 适中偏移
+                y_offset_ratio = 0.1143  # 0.1166 - (0.1166 * 0.02) = 0.1143，再向上2%
             else:  # 近距离 - 精准定位
-                y_offset_ratio = 0.25  # 更大偏移确保命中
+                y_offset_ratio = 0.1863  # 保持不变，向上8%
             
             # 基于头部尺寸调整 - 更大的头部可以更精准
             size_factor = min(self.w, self.h) / 30.0  # 归一化到30像素基准
@@ -58,12 +58,12 @@ class SimpleTarget:
             
             # 调试信息（仅远距离显示）
             if distance_to_center > 30:
-                logger.info(f"🎯 Phase 3: 头部瞄准点 - 距离{distance_to_center:.0f}px, "
+                logger.info(f"🎯 Phase 3.9修正: 头部瞄准点修正调整 - 距离{distance_to_center:.0f}px, "
                            f"尺寸{self.w:.0f}x{self.h:.0f}, 偏移{y_offset_ratio*size_factor:.2f}")
         else:  # 身体目标
-            # 身体目标保持简单偏移
+            # Phase 3.9再改: 身体目标再次微调偏移 - 再次降低一点
             aim_x = self.x  
-            aim_y = self.y - (self.h * 0.2)
+            aim_y = self.y - (self.h * 0.162)  # 0.18 * 0.9 = 0.162，再次微调偏移
         
         return aim_x, aim_y
 
