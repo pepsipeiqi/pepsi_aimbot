@@ -2,6 +2,7 @@ import win32con, win32api
 import time
 import math
 import os
+from collections import deque
 
 from logic.config_watcher import cfg
 from logic.visual import visuals
@@ -25,7 +26,7 @@ class SimpleMouse:
         self.setup_hardware()
     
     def initialize_settings(self):
-        """初始化基本设置"""
+        """初始化基本设置 - 简化版本"""
         # 鼠标设置
         self.dpi = cfg.mouse_dpi
         self.sensitivity = cfg.mouse_sensitivity
@@ -41,17 +42,24 @@ class SimpleMouse:
         # 智能动态移动速度设置
         self.max_move_distance = getattr(cfg, 'max_move_distance', 300)  # 最大单次移动距离
         
-        # 分段速度控制系统
-        self.speed_far = 4.0    # 远距离(>100px): 极速接近
-        self.speed_medium = 3.0 # 中距离(50-100px): 平衡移动
-        self.speed_close = 2.0  # 近距离(<50px): 精准微调
+        # 简化的身体目标速度设置
+        self.speed_ultra_far = 6.0   # 身体超远距离
+        self.speed_far = 4.0         # 身体远距离
+        self.speed_medium = 2.5      # 身体中距离
+        self.speed_close = 1.5       # 身体近距离（提高了一些）
         
-        # 距离阀值设置
-        self.distance_threshold_far = 100  # 远距离阀值
-        self.distance_threshold_close = 50 # 近距离阀值
+        # 距离阈值设置
+        self.distance_threshold_ultra_far = 150  # 超远距离阈值
+        self.distance_threshold_far = 100       # 远距离阈值
+        self.distance_threshold_close = 50      # 近距离阈值
+        
+        # 简化移动设置 - 移除加速度限制
+        self.movement_smoothing = False  # 禁用平滑以提高响应速度
+        self.last_movement_time = 0
         
         logger.info(f"🎯 SimpleMouse initialized: DPI={self.dpi}, Sensitivity={self.sensitivity}")
-        logger.info(f"🚀 智能速度系统: 远距离{self.speed_far}x, 中距离{self.speed_medium}x, 近距离{self.speed_close}x")
+        logger.info(f"🚀 简化速度系统: 身体(超远{self.speed_ultra_far}x, 远{self.speed_far}x, 中{self.speed_medium}x, 近{self.speed_close}x)")
+        logger.info(f"🎯 头部专用速度: 8.0x/6.0x/4.0x/2.0x - 无加速度限制")
     
     def setup_hardware(self):
         """设置硬件驱动"""
@@ -84,55 +92,87 @@ class SimpleMouse:
             self.pid_enabled = False
             self.mouse_controller = None
     
-    def move_to_target(self, target_x, target_y):
-        """移动鼠标到目标位置 - 核心移动逻辑"""
+    def move_to_target(self, target_x, target_y, target_velocity=0, is_head_target=False):
+        """简化直接的鼠标移动 - 无平滑无限制"""
         # 计算需要移动的像素距离
         offset_x = target_x - self.center_x
         offset_y = target_y - self.center_y
         pixel_distance = math.sqrt(offset_x**2 + offset_y**2)
         
-        # 限制最大移动距离（防止跳跃过大）
-        if pixel_distance > self.max_move_distance:
-            scale = self.max_move_distance / pixel_distance
+        # 提高最小移动阈值，减少微调
+        min_distance = 5 if is_head_target else 3
+        if pixel_distance < min_distance:
+            logger.info(f"🎯 目标已在精度范围内: {pixel_distance:.1f}px")
+            return True
+        
+        # 只在距离过大时才限制（放宽限制）
+        if pixel_distance > self.max_move_distance * 1.5:  # 放宽限制
+            scale = (self.max_move_distance * 1.5) / pixel_distance
             offset_x *= scale
             offset_y *= scale
-            pixel_distance = self.max_move_distance
-            logger.info(f"🎯 Movement clamped to max distance: {self.max_move_distance}px")
+            pixel_distance = self.max_move_distance * 1.5
         
         # 转换像素移动为鼠标移动
         mouse_x, mouse_y = self.convert_pixel_to_mouse_movement(offset_x, offset_y)
         
-        # 智能动态速度控制
-        speed_multiplier = self.calculate_dynamic_speed(pixel_distance)
+        # 直接使用基础速度，无任何限制
+        speed_multiplier = self.calculate_dynamic_speed(pixel_distance, target_velocity, is_head_target)
         mouse_x *= speed_multiplier
         mouse_y *= speed_multiplier
         
-        logger.info(f"🎯 Moving to target: pixel_offset=({offset_x:.1f}, {offset_y:.1f}), "
-                   f"mouse_move=({mouse_x:.1f}, {mouse_y:.1f}), distance={pixel_distance:.1f}px, speed={speed_multiplier}x")
+        logger.info(f"🎯 直接移动: pixel_offset=({offset_x:.1f}, {offset_y:.1f}), "
+                   f"mouse_move=({mouse_x:.1f}, {mouse_y:.1f}), distance={pixel_distance:.1f}px, speed={speed_multiplier:.1f}x")
         
         # 执行移动
-        self.execute_mouse_move(int(mouse_x), int(mouse_y))
+        success = self.execute_mouse_move(int(mouse_x), int(mouse_y))
         
         # 可视化目标线
         if (cfg.show_window and cfg.show_target_line) or (cfg.show_overlay and cfg.show_target_line):
-            visuals.draw_target_line(target_x, target_y, 7)  # 假设是头部目标
-    
-    def calculate_dynamic_speed(self, distance):
-        """根据目标距离智能计算移动速度"""
-        if distance > self.distance_threshold_far:
-            # 远距离：极速接近
-            speed = self.speed_far
-            logger.info(f"🚀 远距离模式: {distance:.1f}px, 使用{speed}x速度")
-        elif distance > self.distance_threshold_close:
-            # 中距离：平衡移动
-            speed = self.speed_medium
-            logger.info(f"⚡ 中距离模式: {distance:.1f}px, 使用{speed}x速度")
-        else:
-            # 近距离：精准微调
-            speed = self.speed_close
-            logger.info(f"🎯 近距离模式: {distance:.1f}px, 使用{speed}x速度")
+            visuals.draw_target_line(target_x, target_y, 7 if is_head_target else 0)
         
-        return speed
+        return success
+    
+    # 移除复杂的平滑算法，不再需要
+    # 移除复杂的场景预设系统
+    
+    def calculate_dynamic_speed(self, distance, target_velocity=0, is_head_target=False):
+        """简化的直接速度计算 - 无加速度限制"""
+        # 头部目标使用更激进的速度
+        if is_head_target:
+            if distance > self.distance_threshold_ultra_far:
+                base_speed = 8.0  # 头部超远距离极速
+                mode = "🎯 头部超远模式"
+            elif distance > self.distance_threshold_far:
+                base_speed = 6.0  # 头部远距离快速
+                mode = "🎯 头部远距离模式"
+            elif distance > self.distance_threshold_close:
+                base_speed = 4.0  # 头部中距离
+                mode = "🎯 头部中距离模式"
+            else:
+                base_speed = 2.0  # 头部近距离精准
+                mode = "🎯 头部近距离模式"
+        else:
+            # 身体目标使用相对保守的速度
+            if distance > self.distance_threshold_ultra_far:
+                base_speed = self.speed_ultra_far  # 6.0
+                mode = "🚀 身体超远模式"
+            elif distance > self.distance_threshold_far:
+                base_speed = self.speed_far  # 4.0
+                mode = "🚀 身体远距离模式"
+            elif distance > self.distance_threshold_close:
+                base_speed = self.speed_medium  # 2.5
+                mode = "⚡ 身体中距离模式"
+            else:
+                base_speed = self.speed_close  # 1.2
+                mode = "🎯 身体近距离模式"
+        
+        # 移动目标的轻微补偿（保持简单）
+        if target_velocity > 100:
+            base_speed *= 1.2  # 仅轻微增加
+        
+        logger.info(f"{mode}: {distance:.1f}px, 直接速度{base_speed:.1f}x")
+        
+        return base_speed
     
     def convert_pixel_to_mouse_movement(self, offset_x, offset_y):
         """将像素偏移转换为鼠标移动量"""
@@ -221,7 +261,11 @@ class SimpleMouse:
         
         # 更新动态速度设置
         self.max_move_distance = getattr(cfg, 'max_move_distance', 300)
-        logger.info(f"🚀 智能速度系统更新: 远距离{self.speed_far}x, 中距离{self.speed_medium}x, 近距离{self.speed_close}x")
+        
+        # 重新加载基本设置
+        self.sensitivity = cfg.mouse_sensitivity
+        
+        logger.info(f"🚀 简化速度系统更新: 身体(超远{self.speed_ultra_far}x, 远{self.speed_far}x, 中{self.speed_medium}x, 近{self.speed_close}x)")
         
         # 重新初始化PID控制器
         if hasattr(self, 'mouse_controller') and self.mouse_controller:

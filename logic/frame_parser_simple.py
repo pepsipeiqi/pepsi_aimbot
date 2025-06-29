@@ -2,6 +2,8 @@ import torch
 import supervision as sv
 import numpy as np
 import math
+import time
+from collections import deque, defaultdict
 
 from logic.hotkeys_watcher import hotkeys_watcher
 from logic.config_watcher import cfg
@@ -13,34 +15,110 @@ from logic.logger import logger
 
 class SimpleTarget:
     """简化的目标类 - 只保留必要信息"""
-    def __init__(self, x, y, w, h, cls):
+    def __init__(self, x, y, w, h, cls, timestamp=None):
         self.x = x  # 中心X坐标
         self.y = y  # 中心Y坐标
         self.w = w  # 宽度
         self.h = h  # 高度
         self.cls = cls  # 类别 (7=头部)
+        self.timestamp = timestamp or time.time()
         
         # 计算精确瞄准点
         self.aim_x, self.aim_y = self.calculate_aim_point()
+        
+        # 预测相关属性
+        self.predicted_x = x
+        self.predicted_y = y
+        self.velocity_x = 0.0
+        self.velocity_y = 0.0
     
     def calculate_aim_point(self):
-        """计算最佳瞄准点坐标"""
+        """简化的瞄准点计算 - 减少复杂度"""
+        # 简化的瞄准点逻辑
         if self.cls == 7:  # 头部目标
-            # 瞄准头部中心偏下30%的位置
+            # 头部目标固定偏移：中心偏下30%
             aim_x = self.x
             aim_y = self.y + (self.h * 0.3)
         else:  # 身体目标
-            # 瞄准身体中心偏上位置
+            # 身体目标固定偏移：中心偏上20%
             aim_x = self.x  
             aim_y = self.y - (self.h * 0.2)
         
+        # 减少日志输出
         return aim_x, aim_y
 
+class TargetTracker:
+    """简化的目标跟踪器 - 优先速度而非精度"""
+    
+    def __init__(self, max_history=2):  # 减少历史记录
+        self.target_history = defaultdict(lambda: deque(maxlen=max_history))
+        self.prediction_enabled = not cfg.disable_prediction if hasattr(cfg, 'disable_prediction') else True
+        
+    def update_target(self, target):
+        """简化的目标更新"""
+        # 简化目标key，减少计算
+        target_key = f"{target.cls}_{int(target.x/100)}_{int(target.y/100)}"
+        self.target_history[target_key].append({
+            'x': target.x, 'y': target.y, 'timestamp': target.timestamp
+        })
+        return target_key
+    
+    def predict_position(self, target, prediction_time=0.03):  # 减少预测时间
+        """简化的位置预测"""
+        if not self.prediction_enabled:
+            return target.x, target.y
+            
+        target_key = f"{target.cls}_{int(target.x/100)}_{int(target.y/100)}"
+        history = self.target_history[target_key]
+        
+        if len(history) < 2:
+            return target.x, target.y
+        
+        # 只使用最近的两个位置，避免复杂计算
+        recent = history[-1]
+        previous = history[-2]
+        
+        dt = recent['timestamp'] - previous['timestamp']
+        if dt <= 0 or dt > 0.1:  # 过大的时间间隔不预测
+            return target.x, target.y
+        
+        velocity_x = (recent['x'] - previous['x']) / dt
+        velocity_y = (recent['y'] - previous['y']) / dt
+        
+        # 简单的速度限制（避免过大预测）
+        max_velocity = 500  # 像素/秒
+        if abs(velocity_x) > max_velocity or abs(velocity_y) > max_velocity:
+            return target.x, target.y
+        
+        # 简单的线性预测
+        predicted_x = target.x + velocity_x * prediction_time
+        predicted_y = target.y + velocity_y * prediction_time
+        
+        # 存储速度信息
+        target.velocity_x = velocity_x
+        target.velocity_y = velocity_y
+        
+        # 简化的距离限制
+        max_prediction_distance = 30  # 固定值，减少计算
+        prediction_distance = math.sqrt((predicted_x - target.x)**2 + (predicted_y - target.y)**2)
+        
+        if prediction_distance > max_prediction_distance:
+            scale = max_prediction_distance / prediction_distance
+            predicted_x = target.x + (predicted_x - target.x) * scale
+            predicted_y = target.y + (predicted_y - target.y) * scale
+        
+        # 减少日志输出
+        if prediction_distance > 5:  # 只有在预测距离较大时才打印
+            logger.info(f"🔮 简化预测: ({target.x:.0f},{target.y:.0f}) -> ({predicted_x:.0f},{predicted_y:.0f})")
+        
+        return predicted_x, predicted_y
+
 class SimpleFrameParser:
-    """简化的帧解析器 - 专注于快速准确的目标处理"""
+    """简化的帧解析器 - 专注于快速准确的目标处理 + 预测瞄准"""
     
     def __init__(self):
         self.arch = self.get_arch()
+        self.target_tracker = TargetTracker()
     
     def parse(self, result):
         """解析检测结果并执行瞄准"""
@@ -85,14 +163,17 @@ class SimpleFrameParser:
         if target.cls not in hotkeys_watcher.clss:
             return
         
-        logger.info(f"🎯 Target acquired: cls={target.cls}, aim_point=({target.aim_x:.1f}, {target.aim_y:.1f})")
+        is_head_target = (target.cls == 7)
+        target_velocity = math.sqrt(target.velocity_x**2 + target.velocity_y**2) if hasattr(target, 'velocity_x') else 0
         
-        # 直接移动鼠标到目标位置
-        mouse.move_to_target(target.aim_x, target.aim_y)
+        logger.info(f"🎯 Target acquired: {'HEAD' if is_head_target else 'BODY'}, aim_point=({target.aim_x:.1f}, {target.aim_y:.1f})")
+        
+        # 简化直接移动，传递头部标识
+        mouse.move_to_target(target.aim_x, target.aim_y, target_velocity, is_head_target)
         
         # 检查是否在射击范围内
         if self.is_target_in_scope(target):
-            logger.info("🔥 Target in scope - shooting")
+            logger.info("🔥 Target in scope - 简单三连发")
             shooting.queue.put((True, mouse.get_shooting_key_state()))
         else:
             shooting.queue.put((False, mouse.get_shooting_key_state()))
@@ -134,7 +215,26 @@ class SimpleFrameParser:
         target_data = boxes_array[nearest_idx, :4].cpu().numpy()
         target_class = classes_tensor[nearest_idx].item()
         
-        return SimpleTarget(*target_data, target_class)
+        target = SimpleTarget(*target_data, target_class, time.time())
+        
+        # 更新跟踪器并预测位置
+        self.target_tracker.update_target(target)
+        predicted_x, predicted_y = self.target_tracker.predict_position(target)
+        
+        # 更新瞄准点为预测位置
+        if self.target_tracker.prediction_enabled:
+            target.aim_x = predicted_x
+            target.aim_y = predicted_y
+            
+            # 简化预测更新：直接设置瞄准点为预测位置
+            if target.cls == 7:  # 头部
+                target.aim_x = predicted_x
+                target.aim_y = predicted_y + (target.h * 0.3)
+            else:  # 身体
+                target.aim_x = predicted_x
+                target.aim_y = predicted_y - (target.h * 0.2)
+        
+        return target
     
     def is_target_in_scope(self, target):
         """检查目标是否在瞄准镜范围内"""
