@@ -1,5 +1,6 @@
 from ultralytics import YOLO
 import torch
+import time
 
 from logic.config_watcher import cfg
 from logic.capture import capture
@@ -53,8 +54,14 @@ def init():
     except Exception as e:
         print("An error occurred when loading the AI model:\n", e)
         quit(0)
-        
+    
+    # Detection frequency control variables
+    last_detection_time = 0
+    detection_interval = 1.0 / getattr(cfg, 'detection_fps_limit', 60)  # Default 60 FPS limit
+    frame_skip_counter = 0
+    
     while True:
+        current_time = time.time()
         image = capture.get_new_frame()
         
         if image is not None:
@@ -63,8 +70,37 @@ def init():
                 
             if cfg.show_window or cfg.show_overlay:
                 visuals.queue.put(image)
+            
+            # Check if enough time has passed since last detection
+            time_since_last_detection = current_time - last_detection_time
+            
+            # Skip detection if:
+            # 1. Not enough time has passed (frame rate limiting)
+            # 2. Mouse is actively moving (movement coordination)
+            fps_limited = time_since_last_detection < detection_interval
+            movement_blocking = frameParser.is_movement_in_progress()
+            
+            should_skip_detection = fps_limited or movement_blocking
+            
+            if should_skip_detection:
+                frame_skip_counter += 1
                 
+                # Log skip reason periodically (every 30 frames to avoid spam)
+                if frame_skip_counter % 30 == 1:
+                    if fps_limited and movement_blocking:
+                        print(f"🔄 Detection skip #{frame_skip_counter}: FPS limit + movement active")
+                    elif fps_limited:
+                        print(f"⏱️ Detection skip #{frame_skip_counter}: FPS limit ({time_since_last_detection*1000:.0f}ms < {detection_interval*1000:.0f}ms)")
+                    elif movement_blocking:
+                        print(f"🚫 Detection skip #{frame_skip_counter}: movement active")
+                
+                # Still update visuals even when skipping detection
+                continue
+            
+            # Perform detection
             result = perform_detection(model, image, tracker)
+            last_detection_time = current_time
+            frame_skip_counter = 0
 
             if hotkeys_watcher.app_pause == 0:
                 frameParser.parse(result)
