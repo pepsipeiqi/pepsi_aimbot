@@ -33,18 +33,38 @@ class SimpleTarget:
         self.velocity_y = 0.0
     
     def calculate_aim_point(self):
-        """简化的瞄准点计算 - 减少复杂度"""
-        # 简化的瞄准点逻辑
+        """Phase 3: 精确头部瞄准点计算 - 基于尺寸和距离动态调整"""
         if self.cls == 7:  # 头部目标
-            # 头部目标固定偏移：中心偏下30%
-            aim_x = self.x
-            aim_y = self.y + (self.h * 0.3)
+            # Phase 3: 智能头部瞄准点计算
+            from logic.capture import capture
+            center_x = capture.screen_x_center
+            center_y = capture.screen_y_center
+            distance_to_center = math.sqrt((self.x - center_x)**2 + (self.y - center_y)**2)
+            
+            # 基于距离动态调整瞄准点
+            if distance_to_center > 50:  # 远距离 - 瞄准头部中心
+                y_offset_ratio = 0.1  # 轻微向下偏移
+            elif distance_to_center > 20:  # 中距离 - 精确瞄准
+                y_offset_ratio = 0.15  # 适中偏移
+            else:  # 近距离 - 精准定位
+                y_offset_ratio = 0.25  # 更大偏移确保命中
+            
+            # 基于头部尺寸调整 - 更大的头部可以更精准
+            size_factor = min(self.w, self.h) / 30.0  # 归一化到30像素基准
+            size_factor = max(0.8, min(size_factor, 1.5))  # 限制范围
+            
+            aim_x = self.x  # X轴保持中心
+            aim_y = self.y + (self.h * y_offset_ratio * size_factor)
+            
+            # 调试信息（仅远距离显示）
+            if distance_to_center > 30:
+                logger.info(f"🎯 Phase 3: 头部瞄准点 - 距离{distance_to_center:.0f}px, "
+                           f"尺寸{self.w:.0f}x{self.h:.0f}, 偏移{y_offset_ratio*size_factor:.2f}")
         else:  # 身体目标
-            # 身体目标固定偏移：中心偏上20%
+            # 身体目标保持简单偏移
             aim_x = self.x  
             aim_y = self.y - (self.h * 0.2)
         
-        # 减少日志输出
         return aim_x, aim_y
 
 class TargetTracker:
@@ -179,7 +199,7 @@ class SimpleFrameParser:
             shooting.queue.put((False, mouse.get_shooting_key_state()))
     
     def find_best_target(self, frame):
-        """找到最佳瞄准目标 - 优先头部，选择最近的"""
+        """Phase 3: 头部锁定优先的目标选择 - 避免接近过程中的切换"""
         if isinstance(frame, sv.Detections):
             boxes_array, classes_tensor = self._convert_sv_to_tensor(frame)
         else:
@@ -187,6 +207,9 @@ class SimpleFrameParser:
             classes_tensor = frame.boxes.cls.to(self.arch)
         
         if not classes_tensor.numel():
+            # 如果没有目标，清除头部接近状态
+            if hasattr(mouse, 'head_approaching_active'):
+                mouse.head_approaching_active = False
             return None
         
         # 屏幕中心
@@ -197,19 +220,65 @@ class SimpleFrameParser:
         # 计算到屏幕中心的距离
         distances_sq = torch.sum((boxes_array[:, :2] - center) ** 2, dim=1)
         
-        # 头部目标优先级更高
+        # Phase 3.5: 强化头部锁定系统
         head_mask = classes_tensor == 7
+        current_time = time.time()
+        
+        # 检查当前头部锁定状态
+        is_head_approaching = getattr(mouse, 'head_approaching_active', False)
+        head_lock_start_time = getattr(mouse, 'head_lock_start_time', 0)
+        lock_duration = current_time - head_lock_start_time if head_lock_start_time > 0 else 0
         
         if head_mask.any():
-            # 选择最近的头部目标
+            # 头部目标存在
             head_distances = distances_sq[head_mask]
             nearest_head_idx = torch.argmin(head_distances)
             nearest_idx = torch.nonzero(head_mask)[nearest_head_idx].item()
-            logger.info(f"🎯 Selected HEAD target at distance {math.sqrt(distances_sq[nearest_idx].item()):.1f}px")
+            head_distance = math.sqrt(distances_sq[nearest_idx].item())
+            
+            # Phase 3.5: 强化锁定策略
+            should_lock_head = (
+                head_distance < 50 or  # 50px内强制锁定
+                (is_head_approaching and head_distance < 80) or  # 接近中且80px内
+                (is_head_approaching and lock_duration < 0.3)  # 锁定时间<300ms
+            )
+            
+            if should_lock_head:
+                # 强制锁定头部目标
+                if not is_head_approaching:
+                    # 开始新的锁定
+                    mouse.head_approaching_active = True
+                    mouse.head_lock_start_time = current_time
+                    logger.info(f"🔒 Phase 3.5: 强制锁定HEAD {head_distance:.1f}px - 开始300ms保护期")
+                else:
+                    logger.info(f"🔒 Phase 3.5: 维持HEAD锁定 {head_distance:.1f}px [已锁定{lock_duration*1000:.0f}ms]")
+                target_type = "HEAD"
+            else:
+                # 头部距离过远，可以考虑身体目标
+                body_mask = classes_tensor != 7
+                if body_mask.any():
+                    all_distances = distances_sq
+                    nearest_idx = torch.argmin(all_distances)
+                    if classes_tensor[nearest_idx].item() == 7:
+                        logger.info(f"🎯 Selected HEAD target at distance {head_distance:.1f}px")
+                        target_type = "HEAD"
+                    else:
+                        logger.info(f"🎯 Selected BODY target at distance {math.sqrt(distances_sq[nearest_idx].item()):.1f}px")
+                        target_type = "BODY"
+                        # 切换到身体目标时清除头部锁定
+                        mouse.head_approaching_active = False
+                        mouse.head_lock_start_time = 0
+                else:
+                    logger.info(f"🎯 Selected HEAD target at distance {head_distance:.1f}px")
+                    target_type = "HEAD"
         else:
             # 没有头部目标时选择最近的身体目标
             nearest_idx = torch.argmin(distances_sq)
             logger.info(f"🎯 Selected BODY target at distance {math.sqrt(distances_sq[nearest_idx].item()):.1f}px")
+            target_type = "BODY"
+            # 清除头部锁定状态
+            mouse.head_approaching_active = False
+            mouse.head_lock_start_time = 0
         
         # 创建目标对象
         target_data = boxes_array[nearest_idx, :4].cpu().numpy()
@@ -221,18 +290,14 @@ class SimpleFrameParser:
         self.target_tracker.update_target(target)
         predicted_x, predicted_y = self.target_tracker.predict_position(target)
         
-        # 更新瞄准点为预测位置
+        # Phase 3: 使用预测位置更新瞄准点
         if self.target_tracker.prediction_enabled:
-            target.aim_x = predicted_x
-            target.aim_y = predicted_y
+            # 更新目标位置为预测位置
+            target.x = predicted_x
+            target.y = predicted_y
             
-            # 简化预测更新：直接设置瞄准点为预测位置
-            if target.cls == 7:  # 头部
-                target.aim_x = predicted_x
-                target.aim_y = predicted_y + (target.h * 0.3)
-            else:  # 身体
-                target.aim_x = predicted_x
-                target.aim_y = predicted_y - (target.h * 0.2)
+            # 重新计算精确瞄准点（使用新的Phase 3算法）
+            target.aim_x, target.aim_y = target.calculate_aim_point()
         
         return target
     
