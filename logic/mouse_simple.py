@@ -48,10 +48,10 @@ class SimpleMouse:
         self.speed_medium = 2.5      # 身体中距离
         self.speed_close = 1.5       # 身体近距离（提高了一些）
         
-        # 距离阈值设置
+        # Phase 3.9: 优化距离阈值设置 - 让更多移动进入快速档位
         self.distance_threshold_ultra_far = 150  # 超远距离阈值
         self.distance_threshold_far = 100       # 远距离阈值
-        self.distance_threshold_close = 50      # 近距离阈值
+        self.distance_threshold_close = 45      # 近距离阈值 (50→45)
         
         # 简化移动设置 - 移除加速度限制
         self.movement_smoothing = False  # 禁用平滑以提高响应速度
@@ -67,11 +67,12 @@ class SimpleMouse:
         logger.info(f"🎯 SimpleMouse initialized: DPI={self.dpi}, Sensitivity={self.sensitivity}")
         logger.info(f"🚀 简化速度系统: 身体(超远{self.speed_ultra_far}x, 远{self.speed_far}x, 中{self.speed_medium}x, 近{self.speed_close}x)")
         logger.info("="*80)
-        logger.info("🚀 Phase 3.8: 二次速度提升完成!")
+        logger.info("🚀 Phase 3.9: 三次速度提升完成!")
         logger.info("🔧 保持精确转换: 0.25基础比率 + 温和DPI校正，转换比率0.259稳定")
-        logger.info("⚡ 速度再次优化: 头部(1.87x/1.54x/1.0x) 身体(1.98x/1.65x/1.43x/1.0x)")
-        logger.info("📈 累计性能提升32%: 在3.7基础上再提升10%速度")
+        logger.info("⚡ 速度全面优化: 头部(2.06x/1.69x/1.1x) 身体(2.18x/1.82x/1.57x/1.1x)")
+        logger.info("📈 累计性能提升45%: 在3.8基础上再提升10%速度")
         logger.info("🔒 强化头部锁定: 45px内强制锁定350ms，增强精度检测")
+        logger.info("🎯 距离阈值优化: 头部(35px/12px) 身体(45px)，减少慢速移动")
         logger.info("📊 实时验证: 详细转换比率监控，确保合理范围")
         logger.info("🎯 优化效果: 保持精度前提下最大化接近速度 + 游戏适配三连发(95ms间隔)")
         logger.info("="*80)
@@ -181,34 +182,34 @@ class SimpleMouse:
     # 移除复杂的场景预设系统
     
     def calculate_dynamic_speed(self, distance, target_velocity=0, is_head_target=False):
-        """Phase 3.8: 二次速度提升系统 - 额外提升10%速度保持精度"""
-        # Phase 3.8: 头部目标二次速度提升 - 额外提升10%速度
+        """Phase 3.9: 三次速度提升系统 - 再次提升10%速度优化档位分布"""
+        # Phase 3.9: 头部目标三次速度提升 - 再次提升10%速度
         if is_head_target:
-            if distance > 40:  # 阶段1: 快速接近 (提高到40px)
-                base_speed = 1.87  # 1.7 * 1.1 = 1.87，10%额外提升
-                mode = "🚀 Phase 3.8: 头部快速接近"
-            elif distance > 15:  # 阶段2: 中精度接近 (15-40px)
-                base_speed = 1.54  # 1.4 * 1.1 = 1.54，10%额外提升
-                mode = "⚡ Phase 3.8: 头部中精度接近"
-            else:  # 阶段3: 超精确微调 (<15px)
-                base_speed = 1.0  # 保持不变，确保最终精度
-                mode = "🎯 Phase 3.8: 头部超精确微调"
+            if distance > 35:  # 阶段1: 快速接近 (40px→35px)
+                base_speed = 2.06  # 1.87 * 1.1 = 2.06，再次10%提升
+                mode = "🚀 Phase 3.9: 头部快速接近"
+            elif distance > 12:  # 阶段2: 中精度接近 (15px→12px)
+                base_speed = 1.69  # 1.54 * 1.1 = 1.69，再次10%提升
+                mode = "⚡ Phase 3.9: 头部中精度接近"
+            else:  # 阶段3: 超精确微调 (<12px)
+                base_speed = 1.1  # 1.0 * 1.1 = 1.1，提升微调速度
+                mode = "🎯 Phase 3.9: 头部超精确微调"
         else:
-            # Phase 3.8: 身体目标二次速度提升 - 额外提升10%速度
+            # Phase 3.9: 身体目标三次速度提升 - 再次提升10%速度
             if distance > self.distance_threshold_ultra_far:
-                base_speed = 1.98  # 1.8 * 1.1 = 1.98，10%额外提升
-                mode = "🚀 Phase 3.8: 身体超远"
+                base_speed = 2.18  # 1.98 * 1.1 = 2.18，再次10%提升
+                mode = "🚀 Phase 3.9: 身体超远"
             elif distance > self.distance_threshold_far:
-                base_speed = 1.65  # 1.5 * 1.1 = 1.65，10%额外提升
-                mode = "🚀 Phase 3.8: 身体远距离"
+                base_speed = 1.82  # 1.65 * 1.1 = 1.82，再次10%提升
+                mode = "🚀 Phase 3.9: 身体远距离"
             elif distance > self.distance_threshold_close:
-                base_speed = 1.43  # 1.3 * 1.1 = 1.43，10%额外提升
-                mode = "⚡ Phase 3.8: 身体中距离"
+                base_speed = 1.57  # 1.43 * 1.1 = 1.57，再次10%提升
+                mode = "⚡ Phase 3.9: 身体中距离"
             else:
-                base_speed = 1.0  # 保持不变，确保近距离精度
-                mode = "🎯 Phase 3.8: 身体近距离"
+                base_speed = 1.1  # 1.0 * 1.1 = 1.1，提升近距离速度
+                mode = "🎯 Phase 3.9: 身体近距离"
         
-        # Phase 3.7: 移动目标补偿保持保守
+        # Phase 3.9: 移动目标补偿保持保守
         if target_velocity > 100:
             base_speed *= 1.05  # 保持保守补偿，确保稳定
         
