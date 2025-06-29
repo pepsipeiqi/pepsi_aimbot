@@ -73,7 +73,7 @@ class SimpleMouse:
         logger.info("📈 累计性能提升32%: 在3.7基础上再提升10%速度")
         logger.info("🔒 强化头部锁定: 45px内强制锁定350ms，增强精度检测")
         logger.info("📊 实时验证: 详细转换比率监控，确保合理范围")
-        logger.info("🎯 优化效果: 保持精度前提下最大化接近速度")
+        logger.info("🎯 优化效果: 保持精度前提下最大化接近速度 + 游戏适配三连发(95ms间隔)")
         logger.info("="*80)
     
     def setup_hardware(self):
