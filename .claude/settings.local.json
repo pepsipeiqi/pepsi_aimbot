@@ -4,7 +4,8 @@
       "Bash(python:*)",
       "Bash(rm:*)",
       "Bash(grep:*)",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "Bash(find:*)"
     ],
     "deny": []
   }

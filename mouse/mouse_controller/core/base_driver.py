@@ -1,92 +1,68 @@
+"""
+基础驱动抽象类 - 仅支持相对移动
+"""
+
 from abc import ABC, abstractmethod
-from enum import Enum
-from typing import Optional, Tuple
-import ctypes
-import os
-
-
-class DriverType(Enum):
-    MOUSE_CONTROL = "MouseControl"
-    GHUB_DEVICE = "GHubDevice"
-    LOGITECH_DRIVER = "LogitechDriver"
-
-
-class MouseButton(Enum):
-    LEFT = 1
-    MIDDLE = 2
-    RIGHT = 3
+from typing import Optional, Dict
 
 
 class BaseDriver(ABC):
-    def __init__(self, dll_path: str):
-        self.dll_path = dll_path
-        self.driver = None
-        self.is_initialized = False
-        self._validate_dll_path()
+    """鼠标驱动基类 - 专注于相对移动功能"""
     
-    def _validate_dll_path(self):
-        if not os.path.exists(self.dll_path):
-            raise FileNotFoundError(f"DLL file not found: {self.dll_path}")
+    def __init__(self):
+        self.is_initialized = False
+        self.driver_info = {}
     
     @abstractmethod
     def initialize(self) -> bool:
+        """
+        初始化驱动
+        
+        Returns:
+            bool: 初始化是否成功
+        """
         pass
     
     @abstractmethod
-    def cleanup(self):
+    def move_relative(self, dx: int, dy: int) -> bool:
+        """
+        相对移动鼠标
+        
+        Args:
+            dx: X轴相对移动量
+            dy: Y轴相对移动量
+            
+        Returns:
+            bool: 移动是否成功
+        """
         pass
     
     @abstractmethod
-    def move_relative(self, x: int, y: int) -> bool:
+    def cleanup(self) -> bool:
+        """
+        清理驱动资源
+        
+        Returns:
+            bool: 清理是否成功
+        """
         pass
     
-    @abstractmethod
-    def move_absolute(self, x: int, y: int) -> bool:
-        pass
+    def get_driver_info(self) -> Optional[Dict]:
+        """
+        获取驱动信息
+        
+        Returns:
+            Optional[Dict]: 驱动信息，如果未初始化则返回None
+        """
+        if self.is_initialized:
+            return self.driver_info
+        return None
     
-    @abstractmethod
-    def mouse_down(self, button: MouseButton) -> bool:
-        pass
-    
-    @abstractmethod
-    def mouse_up(self, button: MouseButton) -> bool:
-        pass
-    
-    def click(self, button: MouseButton) -> bool:
-        if self.mouse_down(button):
-            return self.mouse_up(button)
-        return False
-    
-    @abstractmethod
-    def key_down(self, key_code: int) -> bool:
-        pass
-    
-    @abstractmethod
-    def key_up(self, key_code: int) -> bool:
-        pass
-    
-    def key_click(self, key_code: int) -> bool:
-        if self.key_down(key_code):
-            return self.key_up(key_code)
-        return False
-    
-    @abstractmethod
-    def scroll(self, direction: int) -> bool:
-        pass
-    
-    def __enter__(self):
-        if not self.initialize():
-            raise RuntimeError("Failed to initialize driver")
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.cleanup()
-    
-    @property
-    @abstractmethod
-    def driver_type(self) -> DriverType:
-        pass
-    
-    @property
-    def available(self) -> bool:
+    def is_ready(self) -> bool:
+        """
+        检查驱动是否就绪
+        
+        Returns:
+            bool: 驱动是否已初始化并就绪
+        """
         return self.is_initialized

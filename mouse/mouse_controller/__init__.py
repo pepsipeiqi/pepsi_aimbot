@@ -1,17 +1,11 @@
-from .mouse_controller import MouseController, MovementAlgorithm
-from .core.base_driver import BaseDriver, DriverType, MouseButton
-from .core.mouse_control_driver import MouseControlDriver
-from .core.ghub_driver import GHubDriver
-from .core.logitech_driver import LogitechDriver
+"""
+MouseController - 相对坐标鼠标控制系统
+专门用于游戏瞄准的相对坐标移动
+"""
 
-__version__ = "1.0.0"
-__all__ = [
-    "MouseController",
-    "MovementAlgorithm",
-    "BaseDriver", 
-    "DriverType",
-    "MouseButton",
-    "MouseControlDriver",
-    "GHubDriver", 
-    "LogitechDriver"
-]
+from .mouse_controller import MouseController
+
+__version__ = "2.0.0"
+__author__ = "MouseController Team"
+
+__all__ = ["MouseController"]

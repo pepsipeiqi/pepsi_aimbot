@@ -12,7 +12,7 @@ from logic.buttons import Buttons
 from logic.logger import logger
 
 # Import new PID-based mouse controller
-from mouse.mouse_controller import MouseController, MovementAlgorithm
+from mouse.mouse_controller import MouseController
 
 class MovementState(Enum):
     """Movement state enumeration for better coordination"""
@@ -738,7 +738,13 @@ class MouseThread:
         success = False
         if self.pid_enabled and self.mouse_controller:
             try:
-                success = self.mouse_controller.move_relative(buffer_x, buffer_y)
+                # 检测是否为头部目标以使用专用模式
+                is_head_target = hasattr(self, 'current_target_class') and self.current_target_class == 7
+                # 缓冲移动使用高精度模式
+                tolerance = 1 if is_head_target else 2
+                success = self.mouse_controller.move_relative_to_target(
+                    buffer_x, buffer_y, tolerance=tolerance, is_head_target=is_head_target
+                )
                 if success:
                     elapsed_ms = (time.time() - self.aim_start_time) * 1000 if self.fast_aim_mode else 0
                     self.log_movement_info(f"⚡ Buffered move executed: ({buffer_x}, {buffer_y}) | Time: {elapsed_ms:.0f}ms")
@@ -905,7 +911,19 @@ class MouseThread:
         
         if self.pid_enabled and self.mouse_controller:
             try:
-                success = self.mouse_controller.move_relative(int(x), int(y))
+                # 检测是否为头部目标以使用专用模式
+                is_head_target = hasattr(self, 'current_target_class') and self.current_target_class == 7
+                # 根据距离动态设置精度：近距离高精度，远距离快速响应
+                if move_distance <= 50:
+                    tolerance = 1  # 高精度
+                elif move_distance <= 150:
+                    tolerance = 2  # 平衡精度
+                else:
+                    tolerance = 3  # 快速响应
+                
+                success = self.mouse_controller.move_relative_to_target(
+                    int(x), int(y), tolerance=tolerance, is_head_target=is_head_target
+                )
                 
                 if success:
                     if not hasattr(self, '_pid_success_logged'):

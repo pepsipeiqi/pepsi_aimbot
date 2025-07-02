@@ -22,7 +22,7 @@ Sunone Aimbot is an AI-powered aim bot for first-person shooter games. It levera
 ## Requirements
 Before you get started, make sure you have the following prerequisites installed and pay attention to the versions in [Tested Environment](https://github.com/SunOner/sunone_aimbot?tab=readme-ov-file#tested-environment) block, this may cause errors in launching the aimbot.
 
-- [Config options](https://github.com/SunOner/sunone_aimbot_docs/blob/main/config/config.md)
+- [Config options](https://github.com/SunOner/sunone_aimbot_docs/blob/main/config/config.md)a
 - [Install guide](https://github.com/SunOner/sunone_aimbot_docs/blob/main/install/helper.md)
 - [Questions](https://github.com/SunOner/sunone_aimbot_docs/blob/main/questions/questions.md)
 - [Arduino setup](https://github.com/SunOner/HID_Arduino)

@@ -10,7 +10,7 @@ from logic.buttons import Buttons
 from logic.logger import logger
 
 # Import PID mouse controller for precision
-from mouse.mouse_controller import MouseController, MovementAlgorithm
+from mouse.mouse_controller import MouseController
 
 if cfg.mouse_rzr:
     from logic.rzctl import RZCONTROL
@@ -149,6 +149,10 @@ class SimpleMouse:
         if is_head_target:
             self.head_approaching_active = True
         
+        # 设置当前移动的目标类型和距离，供execute_mouse_move使用
+        self.current_move_is_head_target = is_head_target
+        self.current_move_distance = pixel_distance
+        
         # 转换像素移动为鼠标移动 - 传递头部目标标识
         mouse_x, mouse_y = self.convert_pixel_to_mouse_movement(offset_x, offset_y, is_head_target)
         
@@ -284,12 +288,44 @@ class SimpleMouse:
         # 优先使用PID控制器（最精确）
         if self.pid_enabled and self.mouse_controller:
             try:
-                success = self.mouse_controller.move_relative(x, y)
-                if success:
-                    logger.info(f"✅ PID move successful: ({x}, {y})")
-                    return True
+                # 检测是否为头部目标和当前移动距离
+                is_head_target = getattr(self, 'current_move_is_head_target', False)
+                move_distance = getattr(self, 'current_move_distance', 50)
+                
+                # 根据距离和目标类型动态设置精度
+                if is_head_target:
+                    tolerance = 1  # 头部目标始终使用最高精度
                 else:
-                    logger.warning("PID move failed, falling back")
+                    # 身体目标根据距离调整精度
+                    if move_distance <= 30:
+                        tolerance = 1  # 近距离高精度
+                    elif move_distance <= 100:
+                        tolerance = 2  # 中距离平衡
+                    else:
+                        tolerance = 3  # 远距离快速
+                
+                # 对于重要移动使用fast_move_to_target获得详细反馈
+                if is_head_target or move_distance > 50:
+                    # 使用fast_move_to_target获得性能反馈
+                    success, error, duration = self.mouse_controller.fast_move_to_target(
+                        x, y, tolerance=tolerance
+                    )
+                    if success:
+                        logger.info(f"✅ PID fast move: ({x}, {y}) error={error:.1f}px time={duration*1000:.1f}ms "
+                                  f"tolerance={tolerance} head={is_head_target}")
+                        return True
+                    else:
+                        logger.warning(f"🎯 PID fast move failed: error={error:.1f}px time={duration*1000:.1f}ms, falling back")
+                else:
+                    # 普通移动使用标准方法
+                    success = self.mouse_controller.move_relative_to_target(
+                        x, y, tolerance=tolerance, is_head_target=is_head_target
+                    )
+                    if success:
+                        logger.info(f"✅ PID move successful: ({x}, {y}) tolerance={tolerance} head={is_head_target}")
+                        return True
+                    else:
+                        logger.warning("PID move failed, falling back")
             except Exception as e:
                 logger.error(f"PID move error: {e}, falling back")
         

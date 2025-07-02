@@ -1,9 +1,7 @@
-from .linear_movement import LinearMovement
-from .pid_controller import PIDController
-from .ladrc_controller import LADRCController
+"""
+Movement algorithms module
+"""
 
-__all__ = [
-    "LinearMovement",
-    "PIDController", 
-    "LADRCController"
-]
+from .pid_controller import VelocityAwarePIDController, RelativeMovementTracker
+
+__all__ = ["VelocityAwarePIDController", "RelativeMovementTracker"]

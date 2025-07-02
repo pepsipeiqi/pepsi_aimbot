@@ -1,104 +1,78 @@
-import ctypes
+"""
+G HUB 驱动 - Logitech G HUB设备驱动
+"""
+
 import os
+import ctypes
+from ctypes import wintypes
 from typing import Optional
-from .base_driver import BaseDriver, DriverType, MouseButton
+from .base_driver import BaseDriver
 
 
 class GHubDriver(BaseDriver):
-    def __init__(self, dll_path: Optional[str] = None):
-        if dll_path is None:
-            dll_path = os.path.join(os.path.dirname(__file__), "..", "..", "drivers", "ghub_device.dll")
-        super().__init__(dll_path)
-        self.device_ok = False
+    """Logitech G HUB 设备驱动"""
     
+    def __init__(self):
+        super().__init__()
+        self.dll = None
+        self.dll_path = None
+        
     def initialize(self) -> bool:
+        """初始化G HUB驱动"""
         try:
-            self.driver = ctypes.CDLL(self.dll_path)
-            self.device_ok = self.driver.device_open() == 1
-            if not self.device_ok:
-                print('未安装ghub或者lgs驱动!!!')
-                self.is_initialized = False
+            # 查找DLL文件
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            dll_path = os.path.join(project_root, "drivers", "ghub_device.dll")
+            
+            if not os.path.exists(dll_path):
                 return False
-            print('GHub驱动初始化成功!')
+            
+            # 加载DLL
+            self.dll = ctypes.CDLL(dll_path)
+            self.dll_path = dll_path
+            
+            # 设置函数签名
+            self.dll.moveR.argtypes = [ctypes.c_int, ctypes.c_int]
+            self.dll.moveR.restype = None
+            
             self.is_initialized = True
+            self.driver_info = {
+                'type': 'GHub',
+                'dll_path': dll_path,
+                'description': 'Logitech G HUB游戏优化驱动'
+            }
+            
             return True
-        except FileNotFoundError:
-            print('GHub DLL文件未找到')
+            
+        except Exception as e:
             self.is_initialized = False
             return False
-        except Exception as e:
-            print(f"Failed to load ghub_device.dll: {e}")
+    
+    def move_relative(self, dx: int, dy: int) -> bool:
+        """
+        使用G HUB驱动执行相对移动
+        
+        Args:
+            dx: X轴相对移动量
+            dy: Y轴相对移动量
+            
+        Returns:
+            bool: 移动是否成功
+        """
+        if not self.is_initialized or not self.dll:
+            return False
+        
+        try:
+            self.dll.moveR(dx, dy)
+            return True
+        except Exception:
+            return False
+    
+    def cleanup(self) -> bool:
+        """清理驱动资源"""
+        try:
+            self.dll = None
             self.is_initialized = False
-            return False
-    
-    def cleanup(self):
-        self.driver = None
-        self.device_ok = False
-        self.is_initialized = False
-    
-    def move_relative(self, x: int, y: int) -> bool:
-        if not self.is_initialized or not self.device_ok:
-            return False
-        try:
-            self.driver.moveR(int(x), int(y), False)
             return True
-        except Exception as e:
-            print(f"Failed to move mouse relatively: {e}")
+        except Exception:
             return False
-    
-    def move_absolute(self, x: int, y: int) -> bool:
-        if not self.is_initialized or not self.device_ok:
-            return False
-        try:
-            self.driver.moveR(int(x), int(y), True)
-            return True
-        except Exception as e:
-            print(f"Failed to move mouse absolutely: {e}")
-            return False
-    
-    def mouse_down(self, button: MouseButton) -> bool:
-        if not self.is_initialized or not self.device_ok:
-            return False
-        try:
-            self.driver.mouse_down(button.value)
-            return True
-        except Exception as e:
-            print(f"Failed to press mouse button: {e}")
-            return False
-    
-    def mouse_up(self, button: MouseButton) -> bool:
-        if not self.is_initialized or not self.device_ok:
-            return False
-        try:
-            self.driver.mouse_up(button.value)
-            return True
-        except Exception as e:
-            print(f"Failed to release mouse button: {e}")
-            return False
-    
-    def key_down(self, key_code: int) -> bool:
-        if not self.is_initialized or not self.device_ok:
-            return False
-        try:
-            self.driver.key_down(key_code)
-            return True
-        except Exception as e:
-            print(f"Failed to press key: {e}")
-            return False
-    
-    def key_up(self, key_code: int) -> bool:
-        if not self.is_initialized or not self.device_ok:
-            return False
-        try:
-            self.driver.key_up(key_code)
-            return True
-        except Exception as e:
-            print(f"Failed to release key: {e}")
-            return False
-    
-    def scroll(self, direction: int) -> bool:
-        return False
-    
-    @property
-    def driver_type(self) -> DriverType:
-        return DriverType.GHUB_DEVICE
