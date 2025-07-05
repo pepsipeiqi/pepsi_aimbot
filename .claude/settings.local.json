@@ -4,7 +4,11 @@
       "Bash(python:*)",
       "Bash(rm:*)",
       "Bash(grep:*)",
-      "Bash(rg:*)"
+      "Bash(rg:*)",
+      "Bash(timeout:*)",
+      "Bash(true)",
+      "Bash(find:*)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

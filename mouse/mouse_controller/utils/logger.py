@@ -26,7 +26,8 @@ class Logger:
         self._logger.setLevel(getattr(logging, config.level.upper(), logging.INFO))
         
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         )
         
         if config.console_output:
