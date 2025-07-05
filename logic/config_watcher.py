@@ -74,6 +74,12 @@ class Config():
         self.mouse_ghub = self.config_Mouse.getboolean("mouse_ghub")
         self.mouse_rzr = self.config_Mouse.getboolean("mouse_rzr")
         
+        # Raw Input compatibility settings
+        self.force_mouse_new = self.config_Mouse.getboolean("force_mouse_new")
+        self.raw_input_method = str(self.config_Mouse["raw_input_method"])
+        self.enable_raw_input_bypass = self.config_Mouse.getboolean("enable_raw_input_bypass")
+        self.raw_input_debug_logging = self.config_Mouse.getboolean("raw_input_debug_logging")
+        
         # Shooting
         self.config_Shooting = self.config["Shooting"]
         self.auto_shoot = self.config_Shooting.getboolean("auto_shoot")

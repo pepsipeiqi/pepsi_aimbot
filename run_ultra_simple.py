@@ -1,16 +1,18 @@
 """
-Ultra Simple Aimbot Runner - 使用mouse_new库的最简化版本
+Ultra Simple Aimbot Runner - 强制使用mouse_new API的Raw Input兼容版本
 
 核心流程：
 1. YOLO模型检测敌人
 2. 计算目标坐标
-3. 使用mouse_new库一步到位移动
+3. 使用增强的mouse_new Raw Input兼容系统移动
 4. 锁定目标并开枪
 
 特点：
-- 最简化的逻辑，专注于快速锁定
-- 使用mouse_new库的高精度相对移动
-- 减少复杂的移动算法，直接有效
+- 强制使用mouse_new API，不使用硬件驱动
+- 多重Raw Input绕过技术（SendInput, SetPhysicalCursorPos等）
+- 自动检测和切换最有效的鼠标注入方法
+- 保持超激进的速度优化算法
+- 详细的兼容性日志用于故障排除
 """
 
 from ultralytics import YOLO
@@ -27,8 +29,8 @@ from logic.checks import run_checks
 from logic.logger import logger
 import supervision as sv
 
-# 导入硬件驱动鼠标控制器 - Raw Input兼容
-from logic.mouse_hardware_fixed import fixed_mouse_controller as ultra_simple_mouse
+# 导入增强的mouse_new Raw Input兼容控制器
+from logic.mouse_new_raw_input_fixed import enhanced_mouse_controller as ultra_simple_mouse
 
 # 简化的tracker配置
 tracker = sv.ByteTrack() if not cfg.disable_tracker else None
@@ -158,8 +160,8 @@ class SimpleFrameParser:
 
 def init():
     """超简化的初始化和主循环"""
-    print("🚀 Starting Ultra Simple Aimbot System with mouse_new")
-    logger.info("🚀 Ultra Simple Aimbot - mouse_new edition")
+    print("🚀 Starting Ultra Simple Aimbot System with Enhanced mouse_new Raw Input Compatibility")
+    logger.info("🚀 Ultra Simple Aimbot - Enhanced mouse_new Raw Input Compatible edition")
     
     # 运行基础检查
     try:
@@ -186,8 +188,8 @@ def init():
     frame_count = 0
     last_log_time = time.time()
     
-    print("🎯 Ultra simple aimbot started - YOLO → mouse_new → Lock → Shoot")
-    logger.info("🎯 Ultra simple aimbot started - YOLO → mouse_new → Lock → Shoot")
+    print("🎯 Enhanced mouse_new aimbot started - YOLO → Raw Input Compatible Movement → Lock → Shoot")
+    logger.info("🎯 Enhanced mouse_new aimbot started - YOLO → Raw Input Compatible Movement → Lock → Shoot")
     
     # 主循环 - 极简版本
     while True:
