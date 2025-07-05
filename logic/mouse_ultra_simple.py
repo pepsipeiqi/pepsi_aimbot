@@ -22,16 +22,16 @@ if __name__ == "__main__":
 import supervision as sv
 from logic.logger import logger
 
-# 使用修复版的控制器
+# 使用硬件修复版的控制器 - 解决Raw Input游戏兼容性
 try:
-    from logic.mouse_new_fixed import fixed_mouse_controller as mouse_controller
-    logger.info("✅ Using fixed mouse controller")
+    from logic.mouse_hardware_fixed import fixed_mouse_controller as mouse_controller
+    logger.info("✅ Using hardware fixed mouse controller (Raw Input compatible)")
 except Exception as e:
-    logger.error(f"❌ Failed to import fixed controller: {e}")
-    # 回退到原版本
+    logger.error(f"❌ Failed to import hardware fixed controller: {e}")
+    # 回退到纯mouse_new版本
     try:
-        from logic.mouse_new_controller import mouse_new_controller as mouse_controller
-        logger.warning("⚠️ Using original controller (may have issues)")
+        from logic.mouse_new_fixed import fixed_mouse_controller as mouse_controller
+        logger.warning("⚠️ Using mouse_new controller (may not work with Raw Input games)")
     except Exception as e2:
         logger.error(f"❌ Failed to import any controller: {e2}")
         mouse_controller = None

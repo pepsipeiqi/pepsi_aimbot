@@ -1,8 +1,10 @@
 """
-纯mouse_new版本的鼠标控制器 - 完全移除对mouse模块的依赖
+硬件驱动修复版本 - 解决Raw Input游戏兼容性问题
 
-这个版本直接使用mouse_new库，不再依赖任何旧的mouse控制系统。
-专注于超高速、高精度的鼠标移动控制。
+这个版本结合了新算法的优势和硬件驱动的兼容性：
+- 保持超激进的速度优化算法
+- 使用硬件驱动绕过Raw Input限制
+- 为FPS游戏提供完美兼容性
 """
 
 import sys
@@ -10,25 +12,192 @@ import os
 import time
 import math
 
-# 确保mouse_new可用
-try:
-    # 添加mouse_new到路径
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    mouse_new_path = os.path.join(project_root, 'mouse_new')
-    if mouse_new_path not in sys.path:
-        sys.path.insert(0, mouse_new_path)
-    
-    # 导入mouse_new
-    import mouse
-    print("✅ mouse_new library loaded successfully")
-    MOUSE_NEW_AVAILABLE = True
-except Exception as e:
-    print(f"❌ Failed to load mouse_new library: {e}")
-    MOUSE_NEW_AVAILABLE = False
-    mouse = None
+def load_hardware_driver():
+    """加载硬件驱动系统 - 真正的硬件级控制，绕过Raw Input限制"""
+    try:
+        # 获取项目根目录
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        
+        class HardwareMouseController:
+            def __init__(self):
+                self.available = False
+                self.driver_type = "NONE"
+                self.ghub_driver = None
+                self.razer_driver = None
+                self.active_driver = None
+                
+                # 尝试加载GHub硬件驱动（优先级最高）
+                self._try_load_ghub_driver()
+                
+                # 如果GHub失败，尝试加载Razer驱动
+                if not self.available:
+                    self._try_load_razer_driver()
+                
+                # 如果硬件驱动都失败，使用SendInput fallback
+                if not self.available:
+                    self._setup_sendinput_fallback()
+            
+            def _try_load_ghub_driver(self):
+                """尝试加载罗技G HUB硬件驱动"""
+                try:
+                    from logic.ghub import GhubMouse
+                    self.ghub_driver = GhubMouse()
+                    
+                    if self.ghub_driver.gmok:  # 硬件驱动可用
+                        self.available = True
+                        self.driver_type = "LOGITECH_GHUB_HARDWARE"
+                        self.active_driver = "ghub"
+                        print("✅ Logitech G HUB hardware driver loaded successfully")
+                        print("✅ Using hardware-level mouse injection (Raw Input compatible)")
+                    else:
+                        print("⚠️ G HUB driver loaded but hardware not available")
+                        self.ghub_driver = None
+                        
+                except Exception as e:
+                    print(f"⚠️ Failed to load G HUB driver: {e}")
+                    self.ghub_driver = None
+            
+            def _try_load_razer_driver(self):
+                """尝试加载雷蛇硬件驱动"""
+                try:
+                    from logic.rzctl import RZCONTROL
+                    dll_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rzctl.dll')
+                    self.razer_driver = RZCONTROL(dll_path)
+                    
+                    if self.razer_driver.init():  # 初始化成功
+                        self.available = True
+                        self.driver_type = "RAZER_HARDWARE"
+                        self.active_driver = "razer"
+                        print("✅ Razer hardware driver loaded successfully")
+                        print("✅ Using hardware-level mouse injection (Raw Input compatible)")
+                    else:
+                        print("⚠️ Razer driver loaded but initialization failed")
+                        self.razer_driver = None
+                        
+                except Exception as e:
+                    print(f"⚠️ Failed to load Razer driver: {e}")
+                    self.razer_driver = None
+            
+            def _setup_sendinput_fallback(self):
+                """设置SendInput后备方案"""
+                try:
+                    import ctypes
+                    from ctypes import wintypes, windll
+                    self.windll = windll
+                    self.available = True
+                    self.driver_type = "SENDINPUT_FALLBACK"
+                    self.active_driver = "sendinput"
+                    print("⚠️ No hardware drivers available, using SendInput fallback")
+                    print("⚠️ May not work with some Raw Input games")
+                    
+                except Exception as e:
+                    print(f"❌ SendInput fallback also failed: {e}")
+            
+            def get_driver_info(self):
+                return {
+                    'type': self.driver_type,
+                    'available': self.available,
+                    'active_driver': self.active_driver
+                }
+            
+            def is_ready(self):
+                return self.available
+            
+            def move_relative(self, x, y):
+                """硬件级相对移动"""
+                if not self.available:
+                    return False
+                
+                try:
+                    if self.active_driver == "ghub" and self.ghub_driver:
+                        # 使用G HUB硬件驱动的相对移动
+                        result = self.ghub_driver.mouse_xy(int(x), int(y))
+                        return result is not None
+                        
+                    elif self.active_driver == "razer" and self.razer_driver:
+                        # 使用Razer硬件驱动的相对移动
+                        self.razer_driver.mouse_move(int(x), int(y), False)  # False = relative movement
+                        return True
+                        
+                    elif self.active_driver == "sendinput":
+                        # SendInput fallback
+                        return self._sendinput_move_relative(x, y)
+                        
+                    return False
+                    
+                except Exception as e:
+                    print(f"❌ Hardware driver move_relative failed: {e}")
+                    return False
+            
+            def _sendinput_move_relative(self, dx, dy):
+                """SendInput后备实现"""
+                try:
+                    import ctypes
+                    from ctypes import wintypes, windll
+                    
+                    # SendInput结构定义
+                    class MOUSEINPUT(ctypes.Structure):
+                        _fields_ = [
+                            ('dx', wintypes.LONG),
+                            ('dy', wintypes.LONG),
+                            ('mouseData', wintypes.DWORD),
+                            ('dwFlags', wintypes.DWORD),
+                            ('time', wintypes.DWORD),
+                            ('dwExtraInfo', ctypes.POINTER(wintypes.ULONG))
+                        ]
+                    
+                    class INPUT_UNION(ctypes.Union):
+                        _fields_ = [('mi', MOUSEINPUT)]
+                    
+                    class INPUT(ctypes.Structure):
+                        _fields_ = [
+                            ('type', wintypes.DWORD),
+                            ('union', INPUT_UNION)
+                        ]
+                    
+                    # 常量定义
+                    INPUT_MOUSE = 0
+                    MOUSEEVENTF_MOVE = 0x0001
+                    
+                    # 创建输入结构
+                    mouse_input = MOUSEINPUT(
+                        dx=int(dx), dy=int(dy), mouseData=0,
+                        dwFlags=MOUSEEVENTF_MOVE, time=0, dwExtraInfo=None
+                    )
+                    
+                    input_struct = INPUT(
+                        type=INPUT_MOUSE,
+                        union=INPUT_UNION(mi=mouse_input)
+                    )
+                    
+                    # 发送输入
+                    result = windll.user32.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
+                    return result == 1
+                    
+                except Exception as e:
+                    print(f"❌ SendInput fallback failed: {e}")
+                    return False
+        
+        # 创建硬件控制器
+        controller = HardwareMouseController()
+        
+        if controller.available:
+            driver_info = controller.get_driver_info()
+            print(f"✅ Hardware driver system loaded: {driver_info['type']}")
+            return controller
+        else:
+            print(f"❌ No mouse control available")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Failed to load hardware driver system: {e}")
+        return None
 
-class PureMouseNewController:
-    """纯mouse_new版本的鼠标控制器"""
+# 加载硬件驱动系统
+mouse_lib = load_hardware_driver()
+
+class HardwareFixedController:
+    """硬件修复版鼠标控制器 - 保持算法优化"""
     
     def __init__(self):
         # 尝试导入基础配置
@@ -66,17 +235,56 @@ class PureMouseNewController:
         self.lock_start_time = 0
         self.lock_timeout = 1.5          # 缩短锁定超时时间
         
-        # 检查mouse_new状态
-        self.mouse_available = MOUSE_NEW_AVAILABLE and mouse is not None
+        # 检查硬件驱动状态
+        self.mouse_available = mouse_lib is not None and mouse_lib.is_ready()
         
-        print(f"🎯 PureMouseNewController initialized")
+        print(f"🎯 HardwareFixedController initialized")
         print(f"   Screen: {self.screen_width}x{self.screen_height}")
-        print(f"   mouse_new available: {'✅' if self.mouse_available else '❌'}")
+        print(f"   Hardware driver available: {'✅' if self.mouse_available else '❌'}")
+        if mouse_lib and self.mouse_available:
+            driver_info = mouse_lib.get_driver_info()
+            print(f"   Using driver: {driver_info['type']}")
+    
+    def process_data(self, data):
+        """
+        处理YOLO检测数据 - 兼容接口方法
+        
+        Args:
+            data: YOLO检测结果 (supervision.Detections 或 tuple)
+        """
+        try:
+            import supervision as sv
+            
+            # 解析检测数据
+            if isinstance(data, sv.Detections):
+                if len(data.xyxy) == 0:
+                    self.handle_no_target()
+                    return
+                
+                # 获取第一个检测目标（最近或最有威胁的）
+                bbox = data.xyxy[0]  # [x1, y1, x2, y2]
+                target_x = (bbox[0] + bbox[2]) / 2  # 中心X
+                target_y = (bbox[1] + bbox[3]) / 2  # 中心Y
+                target_w = bbox[2] - bbox[0]        # 宽度
+                target_h = bbox[3] - bbox[1]        # 高度
+                target_cls = data.class_id[0] if len(data.class_id) > 0 else 0
+            else:
+                # 传统tuple格式
+                target_x, target_y, target_w, target_h, target_cls = data
+            
+            # 处理目标
+            return self.process_target(target_x, target_y, target_w, target_h, target_cls)
+            
+        except Exception as e:
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{current_time} - ❌ Error processing detection data: {e}")
+            self.handle_no_target()
+            return False
     
     def process_target(self, target_x, target_y, target_w=0, target_h=0, target_cls=0):
         """处理检测到的目标"""
         if not self.mouse_available:
-            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ mouse_new library not available")
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ Hardware driver not available")
             return False
         
         # 精确瞄准胸口中心位置
@@ -126,7 +334,7 @@ class PureMouseNewController:
     def move_to_target(self, offset_x, offset_y, target_cls):
         """移动到目标位置"""
         if not self.mouse_available:
-            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ mouse_new library not available")
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ Hardware driver not available")
             return False
         
         try:
@@ -139,15 +347,15 @@ class PureMouseNewController:
             final_mouse_x, final_mouse_y = int(mouse_x), int(mouse_y)
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - 🎯 EXECUTE: move_relative({final_mouse_x}, {final_mouse_y})")
             
-            # 执行移动（使用Raw Input兼容的SendInput API）
-            success = self._raw_input_move_relative(final_mouse_x, final_mouse_y)
+            # 执行移动（使用硬件驱动相对移动）
+            success = mouse_lib.move_relative(final_mouse_x, final_mouse_y)
             
             # 执行结果日志
             result_status = "SUCCESS" if success else "FAILED"
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - 🎯 RESULT: {result_status}")
             
             if not success:
-                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ mouse_new move failed")
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ Hardware driver move_relative failed")
                 return False
             
             # 重置锁定状态
@@ -158,67 +366,6 @@ class PureMouseNewController:
         except Exception as e:
             current_time = time.strftime("%Y-%m-%d %H:%M:%S")
             print(f"{current_time} - ❌ Mouse movement failed: {e}")
-            return False
-    
-    def _raw_input_move_relative(self, dx, dy):
-        """使用SendInput进行Raw Input兼容的相对移动"""
-        try:
-            import ctypes
-            from ctypes import wintypes, windll
-            
-            # SendInput结构定义
-            class MOUSEINPUT(ctypes.Structure):
-                _fields_ = [
-                    ('dx', wintypes.LONG),
-                    ('dy', wintypes.LONG),
-                    ('mouseData', wintypes.DWORD),
-                    ('dwFlags', wintypes.DWORD),
-                    ('time', wintypes.DWORD),
-                    ('dwExtraInfo', ctypes.POINTER(wintypes.ULONG))
-                ]
-            
-            class INPUT_UNION(ctypes.Union):
-                _fields_ = [('mi', MOUSEINPUT)]
-            
-            class INPUT(ctypes.Structure):
-                _fields_ = [
-                    ('type', wintypes.DWORD),
-                    ('union', INPUT_UNION)
-                ]
-            
-            # 常量定义
-            INPUT_MOUSE = 0
-            MOUSEEVENTF_MOVE = 0x0001
-            
-            # 创建输入结构
-            mouse_input = MOUSEINPUT(
-                dx=dx,
-                dy=dy,
-                mouseData=0,
-                dwFlags=MOUSEEVENTF_MOVE,
-                time=0,
-                dwExtraInfo=None
-            )
-            
-            input_struct = INPUT(
-                type=INPUT_MOUSE,
-                union=INPUT_UNION(mi=mouse_input)
-            )
-            
-            # 发送输入
-            result = windll.user32.SendInput(1, ctypes.byref(input_struct), ctypes.sizeof(INPUT))
-            
-            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            if result == 1:
-                print(f"{current_time} - ✅ SendInput successful: relative move ({dx}, {dy})")
-                return True
-            else:
-                print(f"{current_time} - ❌ SendInput failed: result={result}")
-                return False
-                
-        except Exception as e:
-            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"{current_time} - ❌ SendInput error: {e}")
             return False
     
     def convert_pixel_to_mouse(self, pixel_x, pixel_y):
@@ -344,12 +491,12 @@ class PureMouseNewController:
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ⚠️ Settings update failed: {e}")
 
 # 创建全局实例
-fixed_mouse_controller = PureMouseNewController()
+fixed_mouse_controller = HardwareFixedController()
 
 if __name__ == "__main__":
     # 测试模式
-    print("🧪 Testing PureMouseNewController")
-    controller = PureMouseNewController()
+    print("🧪 Testing HardwareFixedController")
+    controller = HardwareFixedController()
     
     # 测试处理目标
     test_targets = [

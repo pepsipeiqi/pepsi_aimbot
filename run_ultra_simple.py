@@ -27,8 +27,8 @@ from logic.checks import run_checks
 from logic.logger import logger
 import supervision as sv
 
-# 导入新的超简化鼠标控制器
-from logic.mouse_ultra_simple import ultra_simple_mouse
+# 导入硬件驱动鼠标控制器 - Raw Input兼容
+from logic.mouse_hardware_fixed import fixed_mouse_controller as ultra_simple_mouse
 
 # 简化的tracker配置
 tracker = sv.ByteTrack() if not cfg.disable_tracker else None

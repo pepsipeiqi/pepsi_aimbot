@@ -7,7 +7,7 @@ import os
 from logic.config_watcher import cfg
 from logic.buttons import Buttons
 from logic.capture import capture
-from logic.mouse import mouse
+# from logic.mouse import mouse  # 已移除，使用mouse_new系统
 from logic.visual import visuals
 from logic.shooting import shooting
 
@@ -42,7 +42,7 @@ class HotkeysWatcher(threading.Thread):
             if app_reload_cfg in (1, 0):
                 cfg.Read(verbose=True)
                 capture.restart()
-                mouse.update_settings()
+                # mouse.update_settings()  # 已移除，mouse_new系统自动处理
                 self.clss = self.active_classes()
                 if cfg.show_window == False:
                     cv2.destroyAllWindows()
