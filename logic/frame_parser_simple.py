@@ -9,7 +9,7 @@ from logic.hotkeys_watcher import hotkeys_watcher
 from logic.config_watcher import cfg
 from logic.capture import capture
 from logic.visual import visuals
-from logic.mouse_simple import mouse
+from logic.mouse_pure import mouse
 from logic.shooting import shooting
 from logic.logger import logger
 
@@ -199,7 +199,7 @@ class SimpleFrameParser:
             shooting.queue.put((False, mouse.get_shooting_key_state()))
     
     def find_best_target(self, frame):
-        """Phase 3: 头部锁定优先的目标选择 - 避免接近过程中的切换"""
+        """优先头部，无头部时锁定身体的目标选择"""
         if isinstance(frame, sv.Detections):
             boxes_array, classes_tensor = self._convert_sv_to_tensor(frame)
         else:
@@ -207,9 +207,6 @@ class SimpleFrameParser:
             classes_tensor = frame.boxes.cls.to(self.arch)
         
         if not classes_tensor.numel():
-            # 如果没有目标，清除头部接近状态
-            if hasattr(mouse, 'head_approaching_active'):
-                mouse.head_approaching_active = False
             return None
         
         # 屏幕中心
@@ -217,68 +214,46 @@ class SimpleFrameParser:
         center_y = capture.screen_y_center
         center = torch.tensor([center_x, center_y], device=self.arch)
         
+        # 🚀 获取当前鼠标位置进行满意距离检查
+        try:
+            current_mouse_x, current_mouse_y = mouse.get_current_mouse_position()
+        except:
+            current_mouse_x, current_mouse_y = center_x, center_y
+        
         # 计算到屏幕中心的距离
         distances_sq = torch.sum((boxes_array[:, :2] - center) ** 2, dim=1)
         
-        # Phase 3.5: 强化头部锁定系统
+        # 🎯 优先选择头部目标
         head_mask = classes_tensor == 7
-        current_time = time.time()
+        body_mask = (classes_tensor == 0) | (classes_tensor == 1)  # player, bot
         
-        # 检查当前头部锁定状态
-        is_head_approaching = getattr(mouse, 'head_approaching_active', False)
-        head_lock_start_time = getattr(mouse, 'head_lock_start_time', 0)
-        lock_duration = current_time - head_lock_start_time if head_lock_start_time > 0 else 0
+        nearest_idx = None
+        target_type = None
         
         if head_mask.any():
-            # 头部目标存在
+            # 有头部目标，选择最近的头部
             head_distances = distances_sq[head_mask]
             nearest_head_idx = torch.argmin(head_distances)
             nearest_idx = torch.nonzero(head_mask)[nearest_head_idx].item()
             head_distance = math.sqrt(distances_sq[nearest_idx].item())
+            target_type = "HEAD"
             
-            # Phase 3.5: 强化锁定策略
-            should_lock_head = (
-                head_distance < 50 or  # 50px内强制锁定
-                (is_head_approaching and head_distance < 80) or  # 接近中且80px内
-                (is_head_approaching and lock_duration < 0.3)  # 锁定时间<300ms
-            )
+            logger.info(f"🎯 Selected HEAD target at distance {head_distance:.1f}px")
             
-            if should_lock_head:
-                # 强制锁定头部目标
-                if not is_head_approaching:
-                    # 开始新的锁定
-                    mouse.head_approaching_active = True
-                    mouse.head_lock_start_time = current_time
-                    logger.info(f"🔒 Phase 3.5: 强制锁定HEAD {head_distance:.1f}px - 开始300ms保护期")
-                else:
-                    logger.info(f"🔒 Phase 3.5: 维持HEAD锁定 {head_distance:.1f}px [已锁定{lock_duration*1000:.0f}ms]")
-                target_type = "HEAD"
-            else:
-                # 头部距离过远，可以考虑身体目标
-                body_mask = classes_tensor != 7
-                if body_mask.any():
-                    all_distances = distances_sq
-                    nearest_idx = torch.argmin(all_distances)
-                    if classes_tensor[nearest_idx].item() == 7:
-                        logger.info(f"🎯 Selected HEAD target at distance {head_distance:.1f}px")
-                        target_type = "HEAD"
-                    else:
-                        logger.info(f"🎯 Selected BODY target at distance {math.sqrt(distances_sq[nearest_idx].item()):.1f}px")
-                        target_type = "BODY"
-                        # 切换到身体目标时清除头部锁定
-                        mouse.head_approaching_active = False
-                        mouse.head_lock_start_time = 0
-                else:
-                    logger.info(f"🎯 Selected HEAD target at distance {head_distance:.1f}px")
-                    target_type = "HEAD"
-        else:
-            # 没有头部目标时选择最近的身体目标
-            nearest_idx = torch.argmin(distances_sq)
-            logger.info(f"🎯 Selected BODY target at distance {math.sqrt(distances_sq[nearest_idx].item()):.1f}px")
+        elif body_mask.any():
+            # 没有头部目标，选择最近的身体目标
+            body_distances = distances_sq[body_mask]
+            nearest_body_idx = torch.argmin(body_distances)
+            nearest_idx = torch.nonzero(body_mask)[nearest_body_idx].item()
+            body_distance = math.sqrt(distances_sq[nearest_idx].item())
             target_type = "BODY"
-            # 清除头部锁定状态
-            mouse.head_approaching_active = False
-            mouse.head_lock_start_time = 0
+            
+            logger.info(f"🎯 Selected BODY target at distance {body_distance:.1f}px")
+        else:
+            # 没有头部和身体目标
+            logger.info("🎯 No HEAD or BODY targets found")
+            return None
+        
         
         # 创建目标对象
         target_data = boxes_array[nearest_idx, :4].cpu().numpy()

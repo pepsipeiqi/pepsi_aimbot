@@ -5,7 +5,7 @@ import time
 from logic.config_watcher import cfg
 from logic.capture import capture
 from logic.visual import visuals
-from logic.frame_parser_simple import simpleFrameParser
+from logic.frame_parser_ultra_simple import ultraSimpleFrameParser as simpleFrameParser
 from logic.hotkeys_watcher import hotkeys_watcher
 from logic.checks import run_checks
 import supervision as sv
