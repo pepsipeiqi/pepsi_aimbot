@@ -13,9 +13,9 @@ def get_mouse_controller():
     """获取全局鼠标控制器实例"""
     global _mouse_controller
     if _mouse_controller is None:
-        from logic.mouse_new_raw_input_fixed import RawInputCompatibleController
-        _mouse_controller = RawInputCompatibleController()
-        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ✅ mouse_simple: 鼠标控制器已初始化")
+        from logic.mouse_controller_manager import mouse_controller_manager
+        _mouse_controller = mouse_controller_manager
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ✅ mouse_simple: 控制器管理器已初始化")
     return _mouse_controller
 
 class MouseSimple:
@@ -27,7 +27,17 @@ class MouseSimple:
     
     def process_data(self, data):
         """处理YOLO检测数据 - 兼容性接口"""
-        return self.controller.process_data(data)
+        if hasattr(data, 'xyxy') and len(data.xyxy) > 0:
+            # supervision格式，取第一个目标
+            bbox = data.xyxy[0]
+            target_x = (bbox[0] + bbox[2]) / 2
+            target_y = (bbox[1] + bbox[3]) / 2
+            target_w = bbox[2] - bbox[0]
+            target_h = bbox[3] - bbox[1]
+            target_cls = data.class_id[0] if len(data.class_id) > 0 else 0
+            return self.controller.process_target(target_x, target_y, target_w, target_h, target_cls)
+        else:
+            return self.controller.handle_no_target()
     
     def process_target(self, target_x, target_y, target_w=0, target_h=0, target_cls=0):
         """处理检测到的目标 - 兼容性接口"""

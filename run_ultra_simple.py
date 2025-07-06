@@ -29,8 +29,8 @@ from logic.checks import run_checks
 from logic.logger import logger
 import supervision as sv
 
-# 导入增强的mouse_new Raw Input兼容控制器
-from logic.mouse_new_raw_input_fixed import enhanced_mouse_controller as ultra_simple_mouse
+# 导入控制器管理器 - 支持传统和预测式控制
+from logic.mouse_controller_manager import mouse_controller_manager as ultra_simple_mouse
 
 # 简化的tracker配置
 tracker = sv.ByteTrack() if not cfg.disable_tracker else None

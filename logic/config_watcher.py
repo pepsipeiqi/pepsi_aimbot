@@ -138,6 +138,19 @@ class Config():
         self.debug_window_screenshot_key = str(self.config_Debug_window["debug_window_screenshot_key"])
         self.debug_window_name = self.window_name
         
+        # 🎯 预测式控制系统配置
+        if "Mouse" in self.config and "mouse_controller_mode" in self.config["Mouse"]:
+            self.mouse_controller_mode = str(self.config["Mouse"]["mouse_controller_mode"])
+            self.enable_predictive_control = self.config["Mouse"].getboolean("enable_predictive_control", fallback=True)
+            self.enable_auto_fallback = self.config["Mouse"].getboolean("enable_auto_fallback", fallback=True)
+            self.enable_performance_comparison = self.config["Mouse"].getboolean("enable_performance_comparison", fallback=True)
+        else:
+            # 默认值
+            self.mouse_controller_mode = "traditional"
+            self.enable_predictive_control = False
+            self.enable_auto_fallback = True
+            self.enable_performance_comparison = True
+        
         if verbose:
             logger.info("[Config] Config reloaded")
             
