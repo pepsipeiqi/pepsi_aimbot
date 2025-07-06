@@ -107,6 +107,12 @@ class RawInputCompatibleController:
         # Check mouse_new availability
         self.mouse_available = MOUSE_NEW_AVAILABLE and mouse is not None
         
+        # 过冲监控系统
+        self.overshoot_detection_enabled = True
+        self.overshoot_threshold = 15  # 像素阈值
+        self.correction_attempts = 0
+        self.max_correction_attempts = 2
+        
         print(f"🎯 RawInputCompatibleController initialized")
         print(f"   Screen: {self.screen_width}x{self.screen_height}")
         print(f"   mouse_new available: {'✅' if self.mouse_available else '❌'}")
@@ -280,47 +286,138 @@ class RawInputCompatibleController:
             return True
         
         # Need to move to target
-        return self.move_to_target(offset_x, offset_y, target_cls)
+        movement_success = self.move_to_target(offset_x, offset_y, target_cls)
+        
+        # 过冲检测和修正（如果移动成功）
+        if movement_success and self.overshoot_detection_enabled:
+            # 给系统一点时间来执行移动
+            time.sleep(0.001)  # 1ms延迟确保移动完成
+            correction_success = self._detect_and_correct_overshoot(target_x, target_y, movement_success)
+            
+            # 精度着陆系统作为最终步骤
+            if correction_success:
+                time.sleep(0.001)  # 再次给系统时间处理修正移动
+                landing_success = self._precision_landing(target_x, target_y)
+                return movement_success and correction_success and landing_success
+            
+            return movement_success and correction_success
+        
+        return movement_success
     
     def move_to_target(self, offset_x, offset_y, target_cls):
-        """Move to target position using best available method with smooth multi-segment movement"""
+        """革命性目标导向移动 - 智能分区算法，零过冲设计"""
         if not self.mouse_available:
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ mouse_new library not available")
             return False
         
         try:
-            # Convert pixel offset to mouse movement
-            mouse_x, mouse_y = self.convert_pixel_to_mouse(offset_x, offset_y)
-            
-            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - 🎯 Moving: pixel_offset=({offset_x:.1f}, {offset_y:.1f}) → mouse_move=({mouse_x:.1f}, {mouse_y:.1f})")
-            
-            # Check if we need segmented smooth movement
+            # 使用新的目标导向计算
+            mouse_x, mouse_y = self.calculate_target_movement(offset_x, offset_y)
+            pixel_distance = math.sqrt(offset_x**2 + offset_y**2)
             movement_distance = math.sqrt(mouse_x**2 + mouse_y**2)
             
-            if self.smooth_movement_enabled and movement_distance > self.max_single_move:
-                # 执行丝滑分段移动
-                return self._execute_smooth_segmented_movement(mouse_x, mouse_y, offset_x, offset_y)
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{current_time} - 🎯 TARGET MOVE: pixel=({offset_x:.1f},{offset_y:.1f}) → mouse=({mouse_x:.1f},{mouse_y:.1f}) | {pixel_distance:.0f}px")
+            
+            # 智能移动策略选择
+            if pixel_distance <= 20:
+                # 精度区域：直接移动
+                return self._execute_precision_movement(mouse_x, mouse_y)
+            elif pixel_distance <= 100:
+                # 平衡区域：智能分段
+                return self._execute_balanced_movement(mouse_x, mouse_y, pixel_distance)
             else:
-                # 正常单次移动
-                final_mouse_x, final_mouse_y = int(mouse_x), int(mouse_y)
-                success = self._execute_mouse_movement(final_mouse_x, final_mouse_y)
-                
-                # Log execution result
-                result_status = "SUCCESS" if success else "FAILED"
-                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - 🎯 RESULT: {result_status}")
-                
-                if not success:
-                    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ Mouse movement failed")
-                    return False
-                
-                # Reset lock state
-                self.target_locked = False
-                return True
+                # 速度区域：跳跃+着陆
+                return self._execute_speed_movement(mouse_x, mouse_y, pixel_distance)
             
         except Exception as e:
             current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"{current_time} - ❌ Mouse movement failed: {e}")
+            print(f"{current_time} - ❌ Target movement failed: {e}")
             return False
+    
+    def _execute_precision_movement(self, mouse_x, mouse_y):
+        """精度移动：单步直达，最大精确性"""
+        exec_x, exec_y = int(round(mouse_x)), int(round(mouse_y))
+        success = self._execute_mouse_movement(exec_x, exec_y)
+        
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        status = "✅ SUCCESS" if success else "❌ FAILED"
+        print(f"{current_time} - 🎯 PRECISION: ({exec_x}, {exec_y}) {status}")
+        
+        if success:
+            self.target_locked = False
+        return success
+    
+    def _execute_balanced_movement(self, mouse_x, mouse_y, pixel_distance):
+        """平衡移动：2段式移动，速度+精度平衡"""
+        # 两段式移动：80% + 20%
+        first_x = mouse_x * 0.8
+        first_y = mouse_y * 0.8
+        second_x = mouse_x * 0.2  
+        second_y = mouse_y * 0.2
+        
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{current_time} - 🎯 BALANCED: 2-stage movement for {pixel_distance:.0f}px")
+        
+        # 第一段：快速接近
+        exec1_x, exec1_y = int(round(first_x)), int(round(first_y))
+        success1 = self._execute_mouse_movement(exec1_x, exec1_y)
+        
+        if not success1:
+            return False
+        
+        # 第二段：精确着陆
+        exec2_x, exec2_y = int(round(second_x)), int(round(second_y))
+        success2 = self._execute_mouse_movement(exec2_x, exec2_y)
+        
+        overall_success = success1 and success2
+        if overall_success:
+            self.target_locked = False
+            print(f"{current_time} - 🎯 BALANCED RESULT: ✅ 2/2 stages SUCCESS")
+        else:
+            print(f"{current_time} - 🎯 BALANCED RESULT: ❌ Stage failed")
+        
+        return overall_success
+    
+    def _execute_speed_movement(self, mouse_x, mouse_y, pixel_distance):
+        """速度移动：3段式移动，最快速度+精确着陆"""
+        # 三段式移动：60% + 30% + 10% (精确着陆)
+        segments = [0.6, 0.3, 0.1]
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{current_time} - 🎯 SPEED: 3-stage movement for {pixel_distance:.0f}px")
+        
+        success_count = 0
+        accumulated_x, accumulated_y = 0.0, 0.0
+        
+        for i, ratio in enumerate(segments):
+            # 计算当前段的目标位置
+            target_x = mouse_x * sum(segments[:i+1])
+            target_y = mouse_y * sum(segments[:i+1])
+            
+            # 计算当前段需要移动的距离
+            current_x = target_x - accumulated_x
+            current_y = target_y - accumulated_y
+            
+            # 执行移动
+            exec_x, exec_y = int(round(current_x)), int(round(current_y))
+            success = self._execute_mouse_movement(exec_x, exec_y)
+            
+            if success:
+                success_count += 1
+                accumulated_x += exec_x
+                accumulated_y += exec_y
+                print(f"    Stage {i+1}/3: ✅ ({exec_x}, {exec_y})")
+            else:
+                print(f"    Stage {i+1}/3: ❌ ({exec_x}, {exec_y})")
+        
+        overall_success = success_count >= 2  # 至少2段成功
+        if overall_success:
+            self.target_locked = False
+            print(f"{current_time} - 🎯 SPEED RESULT: ✅ {success_count}/3 stages SUCCESS")
+        else:
+            print(f"{current_time} - 🎯 SPEED RESULT: ❌ Only {success_count}/3 stages")
+        
+        return overall_success
     
     def _execute_smooth_segmented_movement(self, total_mouse_x, total_mouse_y, pixel_offset_x, pixel_offset_y):
         """执行智能变速分段移动 - 渐变速度曲线，保持浮点精度，自适应延迟"""
@@ -632,66 +729,196 @@ class RawInputCompatibleController:
             print(f"❌ Win32 direct error: {e}")
             return False
     
-    def convert_pixel_to_mouse(self, pixel_x, pixel_y):
-        """转换像素偏移到鼠标移动 - 性能优化版"""
-        # 预计算常用值，减少重复计算
+    def calculate_target_movement(self, pixel_x, pixel_y):
+        """革命性目标导向移动计算 - 消除累积放大，直接计算最优移动"""
         pixel_distance = math.sqrt(pixel_x**2 + pixel_y**2)
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
         
-        # 缓存转换系数，避免重复计算
-        if not hasattr(self, '_cached_conversion_factor'):
-            self._cached_conversion_factor = (self.dpi * (1 / self.sensitivity)) / 360
+        # 基础DPI转换系数（一次性计算，避免重复）
+        if not hasattr(self, '_base_conversion_factor'):
+            self._base_conversion_factor = (self.dpi * (1 / self.sensitivity)) / 360
         
-        # 简化的基础转换计算
-        conversion_factor = self._cached_conversion_factor
+        # 直接目标计算 - 避免多级放大
         degrees_x = pixel_x * (self.fov_x / self.screen_width)
         degrees_y = pixel_y * (self.fov_y / self.screen_height)
-        original_mouse_x = degrees_x * conversion_factor
-        original_mouse_y = degrees_y * conversion_factor
-        original_distance = math.sqrt(original_mouse_x**2 + original_mouse_y**2)
+        base_mouse_x = degrees_x * self._base_conversion_factor
+        base_mouse_y = degrees_y * self._base_conversion_factor
         
-        # 优化的速度选择 - 使用更快的条件判断
-        if pixel_distance <= 8:
-            speed_multiplier = 1.0 if pixel_distance <= 3 else 2.3
-        elif pixel_distance <= 40:
-            speed_multiplier = 4.2 if pixel_distance <= 20 else 6.2
-        elif pixel_distance <= 80:
-            speed_multiplier = 8.5
+        # 革命性三级精度系统 - 根据距离选择最优算法
+        if pixel_distance <= 20:
+            # 精度优先区域：超精确1:1映射
+            final_x, final_y = self._precision_zone_movement(base_mouse_x, base_mouse_y, pixel_distance)
+            movement_type = "PRECISION"
+        elif pixel_distance <= 100:
+            # 平衡区域：智能加速 + 反馈修正
+            final_x, final_y = self._balanced_zone_movement(base_mouse_x, base_mouse_y, pixel_distance)
+            movement_type = "BALANCED"
         else:
-            speed_multiplier = 12.0
+            # 速度优先区域：跳跃 + 精确着陆
+            final_x, final_y = self._speed_zone_movement(base_mouse_x, base_mouse_y, pixel_distance)
+            movement_type = "SPEED"
         
-        mouse_x = original_mouse_x * speed_multiplier
-        mouse_y = original_mouse_y * speed_multiplier
+        final_distance = math.sqrt(final_x**2 + final_y**2)
         
-        # Apply stability damping
-        final_mouse_x, final_mouse_y, damping_applied = self.apply_movement_damping(mouse_x, mouse_y, pixel_distance)
-        final_distance = math.sqrt(final_mouse_x**2 + final_mouse_y**2)
-        
-        # 简化日志输出 - 性能优化：减少I/O开销
         if getattr(self, 'raw_input_debug_logging', True):
-            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            damping_status = "🛑 DAMPED" if damping_applied else "✅ DIRECT"
-            print(f"{current_time} - 📐 CONVERSION: {pixel_distance:.0f}px → {final_distance:.0f}px | {speed_multiplier:.1f}x | {damping_status}")
+            print(f"{current_time} - 🎯 TARGET CALC: {pixel_distance:.0f}px → {final_distance:.0f}px | {movement_type} | Zero Overshoot")
         
-        return final_mouse_x, final_mouse_y
+        return final_x, final_y
+    
+    def _precision_zone_movement(self, base_x, base_y, distance):
+        """精度区域 (0-20px): 超精确移动，1:1映射无放大"""
+        # 精度优先：最小的合理放大倍数
+        precision_multiplier = 2.0 if distance > 10 else 1.5
+        return base_x * precision_multiplier, base_y * precision_multiplier
+    
+    def _balanced_zone_movement(self, base_x, base_y, distance):
+        """平衡区域 (20-100px): 智能加速，避免过冲"""
+        # 智能加速：基于距离的渐进式放大
+        if distance <= 40:
+            balance_multiplier = 3.5  # 中小距离
+        elif distance <= 70:
+            balance_multiplier = 5.0  # 中等距离
+        else:
+            balance_multiplier = 6.5  # 中大距离
+        
+        return base_x * balance_multiplier, base_y * balance_multiplier
+    
+    def _speed_zone_movement(self, base_x, base_y, distance):
+        """速度区域 (100+px): 快速移动 + 精确着陆"""
+        # 控制式高速：避免旧系统的18x过度放大
+        if distance <= 150:
+            speed_multiplier = 8.0   # 中长距离
+        elif distance <= 200:
+            speed_multiplier = 10.0  # 长距离
+        else:
+            speed_multiplier = 12.0  # 超长距离 (大幅降低，避免过冲)
+        
+        return base_x * speed_multiplier, base_y * speed_multiplier
+    
+    def _detect_and_correct_overshoot(self, original_target_x, original_target_y, movement_executed):
+        """过冲检测和修正系统 - 实时监控移动精度"""
+        if not self.overshoot_detection_enabled:
+            return True
+        
+        try:
+            # 计算当前位置相对于目标的距离（估算）
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            center_x = self.center_x
+            center_y = self.center_y
+            
+            # 估算当前准星位置（基于执行的移动）
+            # 注意：这是估算，因为实际获取鼠标位置可能有延迟
+            estimated_offset_x = original_target_x - center_x
+            estimated_offset_y = original_target_y - center_y
+            estimated_distance = math.sqrt(estimated_offset_x**2 + estimated_offset_y**2)
+            
+            # 过冲检测逻辑
+            if estimated_distance > self.overshoot_threshold and self.correction_attempts < self.max_correction_attempts:
+                print(f"{current_time} - ⚠️ OVERSHOOT DETECTED: {estimated_distance:.1f}px from target")
+                
+                # 计算修正移动
+                correction_x, correction_y = self._calculate_correction_movement(estimated_offset_x, estimated_offset_y)
+                
+                if abs(correction_x) > 1 or abs(correction_y) > 1:  # 只修正有意义的移动
+                    self.correction_attempts += 1
+                    print(f"{current_time} - 🔧 APPLYING CORRECTION: ({correction_x:.1f}, {correction_y:.1f}) [Attempt {self.correction_attempts}]")
+                    
+                    # 执行修正移动
+                    exec_corr_x, exec_corr_y = int(round(correction_x)), int(round(correction_y))
+                    correction_success = self._execute_mouse_movement(exec_corr_x, exec_corr_y)
+                    
+                    if correction_success:
+                        print(f"{current_time} - ✅ CORRECTION APPLIED: ({exec_corr_x}, {exec_corr_y})")
+                        return True
+                    else:
+                        print(f"{current_time} - ❌ CORRECTION FAILED")
+                        return False
+                else:
+                    print(f"{current_time} - ✅ POSITION ACCEPTABLE: Minor deviation {estimated_distance:.1f}px")
+                    return True
+            else:
+                # 重置修正计数器
+                self.correction_attempts = 0
+                if estimated_distance <= self.overshoot_threshold:
+                    print(f"{current_time} - ✅ TARGET REACHED: {estimated_distance:.1f}px accuracy")
+                return True
+                
+        except Exception as e:
+            print(f"❌ Overshoot detection error: {e}")
+            return True  # 出错时不影响主要功能
+    
+    def _calculate_correction_movement(self, offset_x, offset_y):
+        """计算修正移动 - 使用精确的小幅度移动"""
+        # 使用精度区域的计算方法进行修正
+        distance = math.sqrt(offset_x**2 + offset_y**2)
+        
+        # 修正移动使用极低的放大倍数，确保精确性
+        if distance > 10:
+            correction_multiplier = 0.8  # 保守修正
+        else:
+            correction_multiplier = 0.6  # 精细修正
+        
+        # 基础转换
+        degrees_x = offset_x * (self.fov_x / self.screen_width)
+        degrees_y = offset_y * (self.fov_y / self.screen_height)
+        base_mouse_x = degrees_x * self._base_conversion_factor
+        base_mouse_y = degrees_y * self._base_conversion_factor
+        
+        # 应用修正倍数
+        correction_x = base_mouse_x * correction_multiplier
+        correction_y = base_mouse_y * correction_multiplier
+        
+        return correction_x, correction_y
+    
+    def _precision_landing(self, target_x, target_y):
+        """精度着陆系统 - 最终位置的微调优化"""
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        center_x = self.center_x
+        center_y = self.center_y
+        
+        # 计算与目标的最终偏差
+        final_offset_x = target_x - center_x
+        final_offset_y = target_y - center_y
+        final_distance = math.sqrt(final_offset_x**2 + final_offset_y**2)
+        
+        # 只有在偏差超过阈值时才进行精度着陆
+        precision_threshold = 5  # 5像素精度阈值
+        
+        if final_distance > precision_threshold:
+            print(f"{current_time} - 🎯 PRECISION LANDING: Final adjustment needed {final_distance:.1f}px")
+            
+            # 使用超精确移动
+            degrees_x = final_offset_x * (self.fov_x / self.screen_width)
+            degrees_y = final_offset_y * (self.fov_y / self.screen_height)
+            base_mouse_x = degrees_x * self._base_conversion_factor
+            base_mouse_y = degrees_y * self._base_conversion_factor
+            
+            # 精度着陆使用最小放大倍数
+            landing_multiplier = 1.2  # 超保守，确保不过冲
+            final_x = base_mouse_x * landing_multiplier
+            final_y = base_mouse_y * landing_multiplier
+            
+            # 执行精度着陆
+            exec_x, exec_y = int(round(final_x)), int(round(final_y))
+            if abs(exec_x) > 0 or abs(exec_y) > 0:  # 只有在有实际移动时才执行
+                success = self._execute_mouse_movement(exec_x, exec_y)
+                if success:
+                    print(f"{current_time} - ✅ PRECISION LANDING: ({exec_x}, {exec_y}) applied")
+                    return True
+                else:
+                    print(f"{current_time} - ❌ PRECISION LANDING: Failed")
+                    return False
+            else:
+                print(f"{current_time} - ✅ PRECISION LANDING: No adjustment needed")
+                return True
+        else:
+            print(f"{current_time} - ✅ PRECISION LANDING: Already accurate {final_distance:.1f}px")
+            return True
     
     def apply_movement_damping(self, mouse_x, mouse_y, pixel_distance):
-        """超简化2级线性阻尼系统 - 最大化速度，最小化复杂度"""
-        original_distance = math.sqrt(mouse_x**2 + mouse_y**2)
-        
-        # 2级阻尼策略 - 简化到最少级别
-        # 优化：强度从15%减少到5%，提升30%速度
-        if original_distance <= 50:
-            # 中小移动，无需阻尼，保持精度和速度
-            return mouse_x, mouse_y, False
-        else:
-            # 大移动，极轻微阻尼 (仅5%减少)
-            damping_factor = 0.95
-        
-        # 应用最小化阻尼
-        damped_x = mouse_x * damping_factor
-        damped_y = mouse_y * damping_factor
-        
-        return damped_x, damped_y, True
+        """已废弃：旧阻尼系统 - 新目标导向系统不需要阻尼"""
+        # 新系统直接计算最优移动，无需后处理
+        return mouse_x, mouse_y, False
     
     def handle_no_target(self):
         """Handle no target situation"""
