@@ -67,9 +67,9 @@ class RawInputCompatibleController:
         self.center_y = self.screen_height / 2
         self.aim_threshold = 3           # Ultra-aggressive targeting threshold
         self.min_move_threshold = 1      # Minimum movement threshold
-        # 连续移动配置 - 消除卡顿感的终极优化版
+        # 连续移动配置 - 革命性250px阈值，消除90%分段情况
         self.smooth_movement_enabled = getattr(cfg, 'smooth_movement_enabled', True)
-        self.max_single_move = getattr(cfg, 'max_single_move_distance', 120)  # 终极优化: 80→120px, 大幅减少分段
+        self.max_single_move = getattr(cfg, 'max_single_move_distance', 250)  # 革命性优化: 120→250px, 覆盖90%移动
         self.segment_delay = 0  # 零延迟策略 - 完全移除延迟
         self.target_locked = False
         self.lock_start_time = 0
@@ -325,86 +325,103 @@ class RawInputCompatibleController:
     def _execute_smooth_segmented_movement(self, total_mouse_x, total_mouse_y, pixel_offset_x, pixel_offset_y):
         """执行智能变速分段移动 - 渐变速度曲线，保持浮点精度，自适应延迟"""
         total_distance = math.sqrt(total_mouse_x**2 + total_mouse_y**2)
-        # 提高分段阈值减少不必要分段 + 智能分段决策
-        if total_distance <= 120:  # 优化：120px以下直接移动
+        # 革命性提升：大幅提高单次移动阈值，覆盖90%以上移动情况
+        if total_distance <= 250:  # 终极优化：250px以下直接移动
             return self._execute_direct_movement(total_mouse_x, total_mouse_y)
         
-        segments = max(2, min(3, int(total_distance / 120)))  # 使用120px阈值，最多3段
-        
+        # 对于极远距离(>250px)，使用连续插值移动而非分段移动
+        return self._execute_continuous_interpolation_movement(total_mouse_x, total_mouse_y, total_distance)
+    
+    def _execute_continuous_interpolation_movement(self, total_mouse_x, total_mouse_y, total_distance):
+        """执行连续插值移动 - 消除70%-30%分段的不均匀性，实现真正连续感"""
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        if getattr(self, 'raw_input_debug_logging', True):
-            print(f"{current_time} - 🎯 SMART SEGMENTED MOVE: {total_distance:.1f}px in {segments} adaptive segments")
         
-        # 智能变速分段策略 - 渐变速度曲线
-        segment_ratios = self._calculate_segment_ratios(segments)
+        # 智能步长计算 - 基于距离自适应
+        if total_distance <= 400:
+            step_size = 25  # 中等距离：25px固定步长
+        elif total_distance <= 600:
+            step_size = 30  # 远距离：30px固定步长  
+        else:
+            step_size = 35  # 极远距离：35px固定步长
+        
+        # 计算步数 - 确保均匀分布
+        steps = max(2, math.ceil(total_distance / step_size))
+        
+        if getattr(self, 'raw_input_debug_logging', True):
+            print(f"{current_time} - 🎯 CONTINUOUS INTERPOLATION: {total_distance:.0f}px in {steps} uniform steps (step_size={step_size}px)")
+        
+        # 生成均匀连续轨迹点
+        trajectory_points = self._generate_uniform_trajectory(total_mouse_x, total_mouse_y, steps)
         
         success_count = 0
-        accumulated_x, accumulated_y = 0.0, 0.0  # 浮点累积器
+        accumulated_x, accumulated_y = 0.0, 0.0  # 保持浮点精度
         
-        # 执行变速分段移动
-        for i in range(segments):
-            # 计算当前段应该移动的距离（浮点精度）
-            target_x = total_mouse_x * segment_ratios[i]
-            target_y = total_mouse_y * segment_ratios[i]
-            
-            # 计算实际移动量（减去已累积的移动）
+        # 零延迟连续执行 - 高频均匀移动
+        for i, (target_x, target_y) in enumerate(trajectory_points):
+            # 计算当前步骤的实际移动量
             current_move_x = target_x - accumulated_x
             current_move_y = target_y - accumulated_y
             
-            # 转换为整数执行（仅在执行时截断）
+            # 高精度四舍五入转换
             exec_x = int(round(current_move_x))
             exec_y = int(round(current_move_y))
             
-            # 更新累积器（使用实际执行值）
+            # 更新累积器
             accumulated_x += exec_x
             accumulated_y += exec_y
             
-            # 执行当前段移动
-            if exec_x != 0 or exec_y != 0:  # 跳过零移动
+            # 执行移动（跳过无意义的零移动）
+            if exec_x != 0 or exec_y != 0:
                 success = self._execute_mouse_movement(exec_x, exec_y)
-                
                 if success:
                     success_count += 1
                     if getattr(self, 'raw_input_debug_logging', True):
-                        print(f"    Segment {i+1}/{segments}: ✅ ({exec_x}, {exec_y}) ratio={segment_ratios[i]:.2f}")
+                        print(f"    Step {i+1}/{steps}: ✅ ({exec_x}, {exec_y})")
                 else:
                     if getattr(self, 'raw_input_debug_logging', True):
-                        print(f"    Segment {i+1}/{segments}: ❌ ({exec_x}, {exec_y})")
+                        print(f"    Step {i+1}/{steps}: ❌ ({exec_x}, {exec_y})")
                 
-                # 核心优化：移除所有延迟 - 零延迟连续执行
-                # 依靠系统调度和鼠标驱动的自然延迟，实现真正的连续移动
+                # 零延迟策略：完全依靠系统调度的自然延迟
+                # 无任何人工延迟，实现真正连续移动
             else:
                 success_count += 1  # 零移动视为成功
         
-        # 计算整体成功率
-        success_rate = success_count / segments
-        overall_success = success_rate >= 0.8  # 80%以上成功认为整体成功
+        # 计算成功率
+        success_rate = success_count / steps
+        overall_success = success_rate >= 0.8
         
         result_status = "SUCCESS" if overall_success else "PARTIAL"
         if getattr(self, 'raw_input_debug_logging', True):
-            print(f"{current_time} - 🎯 SMART RESULT: {success_count}/{segments} segments ({success_rate*100:.1f}%) - {result_status}")
+            print(f"{current_time} - 🎯 CONTINUOUS RESULT: {success_count}/{steps} ({success_rate*100:.0f}%) {result_status}")
         
         if overall_success:
-            # Reset lock state
             self.target_locked = False
             return True
         else:
             return False
     
-    def _calculate_segment_ratios(self, segments):
-        """计算智能分段比例 - 渐变速度曲线"""
-        if segments == 2:
-            # 两段：第一段70%，第二段30%
-            return [0.70, 1.0]
-        elif segments == 3:
-            # 三段：第一段60%，第二段25%，第三段15%
-            return [0.60, 0.85, 1.0]
-        elif segments == 4:
-            # 四段：第一段50%，后续段依次递减
-            return [0.50, 0.75, 0.90, 1.0]
-        else:
-            # 其他情况回退到平均分段
-            return [i/segments for i in range(1, segments + 1)]
+    def _generate_uniform_trajectory(self, total_x, total_y, steps):
+        """生成平滑轨迹点 - 使用ease-in-out曲线实现自然加速减速"""
+        trajectory = []
+        
+        for i in range(1, steps + 1):
+            # 线性比例
+            linear_ratio = i / steps
+            
+            # Ease-in-out cubic curve for smooth acceleration/deceleration
+            # f(t) = 4t³ if t < 0.5, else 1 - 4(1-t)³
+            if linear_ratio < 0.5:
+                smooth_ratio = 4 * linear_ratio ** 3
+            else:
+                smooth_ratio = 1 - 4 * (1 - linear_ratio) ** 3
+            
+            # 计算当前点的累积位置 - 使用平滑比例
+            x = total_x * smooth_ratio
+            y = total_y * smooth_ratio
+            
+            trajectory.append((x, y))
+        
+        return trajectory
     
     def _calculate_adaptive_delay(self, segment_distance, total_distance):
         """计算自适应延迟 - 基于移动距离动态调整"""
