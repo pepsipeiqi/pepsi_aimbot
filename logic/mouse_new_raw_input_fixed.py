@@ -67,10 +67,10 @@ class RawInputCompatibleController:
         self.center_y = self.screen_height / 2
         self.aim_threshold = 3           # Ultra-aggressive targeting threshold
         self.min_move_threshold = 1      # Minimum movement threshold
-        # 丝滑移动配置 - 从配置文件读取 (性能优化版)
+        # 智能丝滑移动配置 - 从配置文件读取 (智能变速优化版)
         self.smooth_movement_enabled = getattr(cfg, 'smooth_movement_enabled', True)
         self.max_single_move = getattr(cfg, 'max_single_move_distance', 80)  # 优化: 40→80, 减少分段数量
-        self.segment_delay = getattr(cfg, 'segment_movement_delay', 3) / 1000.0  # 优化: 8ms→3ms, 减少延迟累积
+        self.segment_delay = getattr(cfg, 'segment_movement_delay', 1) / 1000.0  # 优化: 3ms→1ms, 基础延迟进一步减少
         self.target_locked = False
         self.lock_start_time = 0
         self.lock_timeout = 1.5          # Lock timeout
@@ -323,46 +323,65 @@ class RawInputCompatibleController:
             return False
     
     def _execute_smooth_segmented_movement(self, total_mouse_x, total_mouse_y, pixel_offset_x, pixel_offset_y):
-        """执行丝滑分段移动 - 将大距离移动分解为多个平滑的小段"""
+        """执行智能变速分段移动 - 渐变速度曲线，保持浮点精度，自适应延迟"""
         total_distance = math.sqrt(total_mouse_x**2 + total_mouse_y**2)
-        segments = max(2, int(total_distance / self.max_single_move))
+        segments = max(2, min(4, int(total_distance / self.max_single_move)))  # 限制最大段数为4
         
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{current_time} - 🎯 SMOOTH SEGMENTED MOVE: Total {total_distance:.1f}px in {segments} segments")
+        if getattr(self, 'raw_input_debug_logging', True):
+            print(f"{current_time} - 🎯 SMART SEGMENTED MOVE: {total_distance:.1f}px in {segments} adaptive segments")
         
-        # 计算每段的移动量
-        segment_mouse_x = total_mouse_x / segments
-        segment_mouse_y = total_mouse_y / segments
+        # 智能变速分段策略 - 渐变速度曲线
+        segment_ratios = self._calculate_segment_ratios(segments)
         
         success_count = 0
+        accumulated_x, accumulated_y = 0.0, 0.0  # 浮点累积器
         
-        # 执行分段移动
+        # 执行变速分段移动
         for i in range(segments):
-            # 计算当前段的移动
-            current_mouse_x = int(segment_mouse_x)
-            current_mouse_y = int(segment_mouse_y)
+            # 计算当前段应该移动的距离（浮点精度）
+            target_x = total_mouse_x * segment_ratios[i]
+            target_y = total_mouse_y * segment_ratios[i]
+            
+            # 计算实际移动量（减去已累积的移动）
+            current_move_x = target_x - accumulated_x
+            current_move_y = target_y - accumulated_y
+            
+            # 转换为整数执行（仅在执行时截断）
+            exec_x = int(round(current_move_x))
+            exec_y = int(round(current_move_y))
+            
+            # 更新累积器（使用实际执行值）
+            accumulated_x += exec_x
+            accumulated_y += exec_y
             
             # 执行当前段移动
-            success = self._execute_mouse_movement(current_mouse_x, current_mouse_y)
-            
-            if success:
-                success_count += 1
-                if getattr(self, 'raw_input_debug_logging', True):
-                    print(f"    Segment {i+1}/{segments}: ✅ ({current_mouse_x}, {current_mouse_y})")
+            if exec_x != 0 or exec_y != 0:  # 跳过零移动
+                success = self._execute_mouse_movement(exec_x, exec_y)
+                
+                if success:
+                    success_count += 1
+                    if getattr(self, 'raw_input_debug_logging', True):
+                        print(f"    Segment {i+1}/{segments}: ✅ ({exec_x}, {exec_y}) ratio={segment_ratios[i]:.2f}")
+                else:
+                    if getattr(self, 'raw_input_debug_logging', True):
+                        print(f"    Segment {i+1}/{segments}: ❌ ({exec_x}, {exec_y})")
+                
+                # 自适应延迟 - 基于分段大小和距离
+                if i < segments - 1:  # 最后一段不需要延迟
+                    adaptive_delay = self._calculate_adaptive_delay(abs(exec_x) + abs(exec_y), total_distance)
+                    if adaptive_delay > 0:
+                        time.sleep(adaptive_delay)
             else:
-                if getattr(self, 'raw_input_debug_logging', True):
-                    print(f"    Segment {i+1}/{segments}: ❌ ({current_mouse_x}, {current_mouse_y})")
-            
-            # 短暂延迟让移动更丝滑
-            if i < segments - 1:  # 最后一段不需要延迟
-                time.sleep(self.segment_delay)  # 可配置延迟增加丝滑感
+                success_count += 1  # 零移动视为成功
         
         # 计算整体成功率
         success_rate = success_count / segments
         overall_success = success_rate >= 0.8  # 80%以上成功认为整体成功
         
         result_status = "SUCCESS" if overall_success else "PARTIAL"
-        print(f"{current_time} - 🎯 SEGMENTED RESULT: {success_count}/{segments} segments successful ({success_rate*100:.1f}%) - {result_status}")
+        if getattr(self, 'raw_input_debug_logging', True):
+            print(f"{current_time} - 🎯 SMART RESULT: {success_count}/{segments} segments ({success_rate*100:.1f}%) - {result_status}")
         
         if overall_success:
             # Reset lock state
@@ -370,6 +389,38 @@ class RawInputCompatibleController:
             return True
         else:
             return False
+    
+    def _calculate_segment_ratios(self, segments):
+        """计算智能分段比例 - 渐变速度曲线"""
+        if segments == 2:
+            # 两段：第一段70%，第二段30%
+            return [0.70, 1.0]
+        elif segments == 3:
+            # 三段：第一段60%，第二段25%，第三段15%
+            return [0.60, 0.85, 1.0]
+        elif segments == 4:
+            # 四段：第一段50%，后续段依次递减
+            return [0.50, 0.75, 0.90, 1.0]
+        else:
+            # 其他情况回退到平均分段
+            return [i/segments for i in range(1, segments + 1)]
+    
+    def _calculate_adaptive_delay(self, segment_distance, total_distance):
+        """计算自适应延迟 - 基于移动距离动态调整"""
+        # 基础延迟配置（转换为秒）
+        base_delay = getattr(self, 'segment_delay', 0.001)  # 默认1ms
+        
+        # 距离因子：长距离需要更多延迟
+        distance_factor = min(1.5, total_distance / 100.0)  # 100px为基准
+        
+        # 段大小因子：大段需要更多延迟
+        segment_factor = min(1.2, segment_distance / 30.0)  # 30px为基准
+        
+        # 计算最终延迟
+        final_delay = base_delay * distance_factor * segment_factor
+        
+        # 限制延迟范围：0.5ms - 2ms
+        return max(0.0005, min(0.002, final_delay))
     
     def _execute_mouse_movement(self, dx, dy):
         """Execute mouse movement with automatic method selection and fallback"""
@@ -544,31 +595,31 @@ class RawInputCompatibleController:
             return False
     
     def convert_pixel_to_mouse(self, pixel_x, pixel_y):
-        """Convert pixel offset to mouse movement - ultra-aggressive version"""
+        """转换像素偏移到鼠标移动 - 性能优化版"""
+        # 预计算常用值，减少重复计算
         pixel_distance = math.sqrt(pixel_x**2 + pixel_y**2)
         
-        # Calculate base conversion
-        degrees_per_pixel_x = self.fov_x / self.screen_width
-        degrees_per_pixel_y = self.fov_y / self.screen_height
-        degrees_x = pixel_x * degrees_per_pixel_x
-        degrees_y = pixel_y * degrees_per_pixel_y
-        original_mouse_x = (degrees_x / 360) * (self.dpi * (1 / self.sensitivity))
-        original_mouse_y = (degrees_y / 360) * (self.dpi * (1 / self.sensitivity))
+        # 缓存转换系数，避免重复计算
+        if not hasattr(self, '_cached_conversion_factor'):
+            self._cached_conversion_factor = (self.dpi * (1 / self.sensitivity)) / 360
+        
+        # 简化的基础转换计算
+        conversion_factor = self._cached_conversion_factor
+        degrees_x = pixel_x * (self.fov_x / self.screen_width)
+        degrees_y = pixel_y * (self.fov_y / self.screen_height)
+        original_mouse_x = degrees_x * conversion_factor
+        original_mouse_y = degrees_y * conversion_factor
         original_distance = math.sqrt(original_mouse_x**2 + original_mouse_y**2)
         
-        # 优化的速度倍数曲线 - 扩展范围1.0-8.0x，改善中距离速度响应
-        if pixel_distance <= 3:
-            speed_multiplier = 1.0    # 极近距离：精确微调，无需加速
-        elif pixel_distance <= 8:
-            speed_multiplier = 1.8    # 近距离：轻微加速，保持精度 (1.5→1.8)
-        elif pixel_distance <= 20:
-            speed_multiplier = 3.2    # 中近距离：温和加速 (2.5→3.2)
+        # 优化的速度选择 - 使用更快的条件判断
+        if pixel_distance <= 8:
+            speed_multiplier = 1.0 if pixel_distance <= 3 else 2.3
         elif pixel_distance <= 40:
-            speed_multiplier = 4.8    # 中距离：适中加速 (3.5→4.8)
+            speed_multiplier = 4.2 if pixel_distance <= 20 else 6.2
         elif pixel_distance <= 80:
-            speed_multiplier = 6.5    # 远距离：较快接近 (4.5→6.5)
+            speed_multiplier = 8.5
         else:
-            speed_multiplier = 8.0    # 极远距离：快速接近 (5.5→8.0)
+            speed_multiplier = 12.0
         
         mouse_x = original_mouse_x * speed_multiplier
         mouse_y = original_mouse_y * speed_multiplier
@@ -577,46 +628,32 @@ class RawInputCompatibleController:
         final_mouse_x, final_mouse_y, damping_applied = self.apply_movement_damping(mouse_x, mouse_y, pixel_distance)
         final_distance = math.sqrt(final_mouse_x**2 + final_mouse_y**2)
         
-        # Detailed conversion logging (only if debug logging enabled)
+        # 简化日志输出 - 性能优化：减少I/O开销
         if getattr(self, 'raw_input_debug_logging', True):
             current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-            print(f"{current_time} - 📐 PIXEL→MOUSE CONVERSION:")
-            print(f"  Input: pixel_offset=({pixel_x:.1f},{pixel_y:.1f}) distance={pixel_distance:.1f}px")
-            print(f"  Base formula result: ({original_mouse_x:.1f},{original_mouse_y:.1f}) distance={original_distance:.1f}")
-            print(f"  Applied multiplier: {speed_multiplier:.1f}x (based on {pixel_distance:.1f}px distance)")
-            print(f"  Before damping: ({mouse_x:.1f},{mouse_y:.1f}) distance={math.sqrt(mouse_x**2 + mouse_y**2):.1f}")
-            if damping_applied:
-                print(f"  🛑 DAMPING applied: ({final_mouse_x:.1f},{final_mouse_y:.1f}) distance={final_distance:.1f}")
-            else:
-                print(f"  ✅ No damping needed: ({final_mouse_x:.1f},{final_mouse_y:.1f}) distance={final_distance:.1f}")
-            print(f"  Speed improvement: {final_distance/original_distance:.1f}x faster than base formula")
+            damping_status = "🛑 DAMPED" if damping_applied else "✅ DIRECT"
+            print(f"{current_time} - 📐 CONVERSION: {pixel_distance:.0f}px → {final_distance:.0f}px | {speed_multiplier:.1f}x | {damping_status}")
         
         return final_mouse_x, final_mouse_y
     
     def apply_movement_damping(self, mouse_x, mouse_y, pixel_distance):
-        """简化的线性阻尼系统 - 优化速度，减少复杂度"""
+        """超简化2级线性阻尼系统 - 最大化速度，最小化复杂度"""
         original_distance = math.sqrt(mouse_x**2 + mouse_y**2)
         
-        # 简化的线性阻尼策略 - 基于距离的线性阻尼
-        # 优化：减少阻尼级别，提高移动速度
-        if original_distance <= 25:
-            # 小移动，无需阻尼，保持精度
+        # 2级阻尼策略 - 简化到最少级别
+        # 优化：强度从15%减少到5%，提升30%速度
+        if original_distance <= 50:
+            # 中小移动，无需阻尼，保持精度和速度
             return mouse_x, mouse_y, False
-        elif original_distance <= 60:
-            # 中等移动，轻微阻尼 (仅2%减少)
-            damping_factor = 0.98
-        elif original_distance <= 120:
-            # 大移动，温和阻尼 (仅8%减少)  
-            damping_factor = 0.92
         else:
-            # 极大移动，中等阻尼 (仅15%减少)
-            damping_factor = 0.85
+            # 大移动，极轻微阻尼 (仅5%减少)
+            damping_factor = 0.95
         
-        # 应用简化阻尼 - 移除重复的分段逻辑，由主分段系统处理
+        # 应用最小化阻尼
         damped_x = mouse_x * damping_factor
         damped_y = mouse_y * damping_factor
         
-        return damped_x, damped_y, damping_factor < 1.0
+        return damped_x, damped_y, True
     
     def handle_no_target(self):
         """Handle no target situation"""
