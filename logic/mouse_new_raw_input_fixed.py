@@ -67,10 +67,10 @@ class RawInputCompatibleController:
         self.center_y = self.screen_height / 2
         self.aim_threshold = 3           # Ultra-aggressive targeting threshold
         self.min_move_threshold = 1      # Minimum movement threshold
-        # 智能丝滑移动配置 - 从配置文件读取 (智能变速优化版)
+        # 连续移动配置 - 消除卡顿感的终极优化版
         self.smooth_movement_enabled = getattr(cfg, 'smooth_movement_enabled', True)
-        self.max_single_move = getattr(cfg, 'max_single_move_distance', 80)  # 优化: 40→80, 减少分段数量
-        self.segment_delay = getattr(cfg, 'segment_movement_delay', 1) / 1000.0  # 优化: 3ms→1ms, 基础延迟进一步减少
+        self.max_single_move = getattr(cfg, 'max_single_move_distance', 120)  # 终极优化: 80→120px, 大幅减少分段
+        self.segment_delay = 0  # 零延迟策略 - 完全移除延迟
         self.target_locked = False
         self.lock_start_time = 0
         self.lock_timeout = 1.5          # Lock timeout
@@ -325,7 +325,11 @@ class RawInputCompatibleController:
     def _execute_smooth_segmented_movement(self, total_mouse_x, total_mouse_y, pixel_offset_x, pixel_offset_y):
         """执行智能变速分段移动 - 渐变速度曲线，保持浮点精度，自适应延迟"""
         total_distance = math.sqrt(total_mouse_x**2 + total_mouse_y**2)
-        segments = max(2, min(4, int(total_distance / self.max_single_move)))  # 限制最大段数为4
+        # 提高分段阈值减少不必要分段 + 智能分段决策
+        if total_distance <= 120:  # 优化：120px以下直接移动
+            return self._execute_direct_movement(total_mouse_x, total_mouse_y)
+        
+        segments = max(2, min(3, int(total_distance / 120)))  # 使用120px阈值，最多3段
         
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
         if getattr(self, 'raw_input_debug_logging', True):
@@ -367,11 +371,8 @@ class RawInputCompatibleController:
                     if getattr(self, 'raw_input_debug_logging', True):
                         print(f"    Segment {i+1}/{segments}: ❌ ({exec_x}, {exec_y})")
                 
-                # 自适应延迟 - 基于分段大小和距离
-                if i < segments - 1:  # 最后一段不需要延迟
-                    adaptive_delay = self._calculate_adaptive_delay(abs(exec_x) + abs(exec_y), total_distance)
-                    if adaptive_delay > 0:
-                        time.sleep(adaptive_delay)
+                # 核心优化：移除所有延迟 - 零延迟连续执行
+                # 依靠系统调度和鼠标驱动的自然延迟，实现真正的连续移动
             else:
                 success_count += 1  # 零移动视为成功
         
@@ -419,8 +420,28 @@ class RawInputCompatibleController:
         # 计算最终延迟
         final_delay = base_delay * distance_factor * segment_factor
         
-        # 限制延迟范围：0.5ms - 2ms
-        return max(0.0005, min(0.002, final_delay))
+        # 优化：完全移除延迟系统
+        return 0  # 零延迟策略
+    
+    def _execute_direct_movement(self, mouse_x, mouse_y):
+        """直接移动 - 用于中小距离移动，消除不必要的分段"""
+        exec_x = int(round(mouse_x))
+        exec_y = int(round(mouse_y))
+        
+        if exec_x == 0 and exec_y == 0:
+            return True  # 零移动直接成功
+        
+        success = self._execute_mouse_movement(exec_x, exec_y)
+        
+        if getattr(self, 'raw_input_debug_logging', True):
+            current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            status = "✅" if success else "❌"
+            print(f"{current_time} - 🎯 DIRECT MOVE: ({exec_x}, {exec_y}) {status}")
+        
+        if success:
+            self.target_locked = False
+        
+        return success
     
     def _execute_mouse_movement(self, dx, dy):
         """Execute mouse movement with automatic method selection and fallback"""

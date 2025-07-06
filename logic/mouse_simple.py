@@ -51,6 +51,35 @@ class MouseSimple:
     def auto_shoot(self):
         """自动射击状态 - 兼容性接口"""
         return self.controller.auto_shoot
+    
+    def move_to_target(self, target_x, target_y, target_velocity, is_head_target):
+        """移动到目标位置 - 兼容性接口"""
+        # 获取屏幕中心坐标
+        from logic.capture import capture
+        center_x = capture.screen_x_center
+        center_y = capture.screen_y_center
+        
+        # 计算偏移量
+        offset_x = target_x - center_x
+        offset_y = target_y - center_y
+        
+        # 确定目标类别（7=头部，0=身体）
+        target_cls = 7 if is_head_target else 0
+        
+        # 调用底层移动方法
+        return self.controller.move_to_target(offset_x, offset_y, target_cls)
+    
+    def get_shooting_key_state(self):
+        """获取射击按键状态 - 兼容性接口"""
+        # 从配置获取射击设置
+        from logic.config_watcher import cfg
+        
+        # 返回当前的射击配置状态
+        return {
+            'auto_shoot': getattr(cfg, 'auto_shoot', True),
+            'triggerbot': getattr(cfg, 'triggerbot', False),
+            'force_click': getattr(cfg, 'force_click', False)
+        }
 
 # 创建全局鼠标实例供导入使用
 mouse = MouseSimple()
