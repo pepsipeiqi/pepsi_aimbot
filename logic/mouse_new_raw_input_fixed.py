@@ -67,7 +67,10 @@ class RawInputCompatibleController:
         self.center_y = self.screen_height / 2
         self.aim_threshold = 3           # Ultra-aggressive targeting threshold
         self.min_move_threshold = 1      # Minimum movement threshold
-        self.max_single_move = 300       # Maximum single movement distance
+        # 丝滑移动配置 - 从配置文件读取 (性能优化版)
+        self.smooth_movement_enabled = getattr(cfg, 'smooth_movement_enabled', True)
+        self.max_single_move = getattr(cfg, 'max_single_move_distance', 80)  # 优化: 40→80, 减少分段数量
+        self.segment_delay = getattr(cfg, 'segment_movement_delay', 3) / 1000.0  # 优化: 8ms→3ms, 减少延迟累积
         self.target_locked = False
         self.lock_start_time = 0
         self.lock_timeout = 1.5          # Lock timeout
@@ -280,7 +283,7 @@ class RawInputCompatibleController:
         return self.move_to_target(offset_x, offset_y, target_cls)
     
     def move_to_target(self, offset_x, offset_y, target_cls):
-        """Move to target position using best available method"""
+        """Move to target position using best available method with smooth multi-segment movement"""
         if not self.mouse_available:
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ mouse_new library not available")
             return False
@@ -291,25 +294,81 @@ class RawInputCompatibleController:
             
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - 🎯 Moving: pixel_offset=({offset_x:.1f}, {offset_y:.1f}) → mouse_move=({mouse_x:.1f}, {mouse_y:.1f})")
             
-            # Execute movement with best method
-            final_mouse_x, final_mouse_y = int(mouse_x), int(mouse_y)
-            success = self._execute_mouse_movement(final_mouse_x, final_mouse_y)
+            # Check if we need segmented smooth movement
+            movement_distance = math.sqrt(mouse_x**2 + mouse_y**2)
             
-            # Log execution result
-            result_status = "SUCCESS" if success else "FAILED"
-            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - 🎯 RESULT: {result_status}")
-            
-            if not success:
-                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ All mouse movement methods failed")
-                return False
-            
-            # Reset lock state
-            self.target_locked = False
-            return True
+            if self.smooth_movement_enabled and movement_distance > self.max_single_move:
+                # 执行丝滑分段移动
+                return self._execute_smooth_segmented_movement(mouse_x, mouse_y, offset_x, offset_y)
+            else:
+                # 正常单次移动
+                final_mouse_x, final_mouse_y = int(mouse_x), int(mouse_y)
+                success = self._execute_mouse_movement(final_mouse_x, final_mouse_y)
+                
+                # Log execution result
+                result_status = "SUCCESS" if success else "FAILED"
+                print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - 🎯 RESULT: {result_status}")
+                
+                if not success:
+                    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ❌ Mouse movement failed")
+                    return False
+                
+                # Reset lock state
+                self.target_locked = False
+                return True
             
         except Exception as e:
             current_time = time.strftime("%Y-%m-%d %H:%M:%S")
             print(f"{current_time} - ❌ Mouse movement failed: {e}")
+            return False
+    
+    def _execute_smooth_segmented_movement(self, total_mouse_x, total_mouse_y, pixel_offset_x, pixel_offset_y):
+        """执行丝滑分段移动 - 将大距离移动分解为多个平滑的小段"""
+        total_distance = math.sqrt(total_mouse_x**2 + total_mouse_y**2)
+        segments = max(2, int(total_distance / self.max_single_move))
+        
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{current_time} - 🎯 SMOOTH SEGMENTED MOVE: Total {total_distance:.1f}px in {segments} segments")
+        
+        # 计算每段的移动量
+        segment_mouse_x = total_mouse_x / segments
+        segment_mouse_y = total_mouse_y / segments
+        
+        success_count = 0
+        
+        # 执行分段移动
+        for i in range(segments):
+            # 计算当前段的移动
+            current_mouse_x = int(segment_mouse_x)
+            current_mouse_y = int(segment_mouse_y)
+            
+            # 执行当前段移动
+            success = self._execute_mouse_movement(current_mouse_x, current_mouse_y)
+            
+            if success:
+                success_count += 1
+                if getattr(self, 'raw_input_debug_logging', True):
+                    print(f"    Segment {i+1}/{segments}: ✅ ({current_mouse_x}, {current_mouse_y})")
+            else:
+                if getattr(self, 'raw_input_debug_logging', True):
+                    print(f"    Segment {i+1}/{segments}: ❌ ({current_mouse_x}, {current_mouse_y})")
+            
+            # 短暂延迟让移动更丝滑
+            if i < segments - 1:  # 最后一段不需要延迟
+                time.sleep(self.segment_delay)  # 可配置延迟增加丝滑感
+        
+        # 计算整体成功率
+        success_rate = success_count / segments
+        overall_success = success_rate >= 0.8  # 80%以上成功认为整体成功
+        
+        result_status = "SUCCESS" if overall_success else "PARTIAL"
+        print(f"{current_time} - 🎯 SEGMENTED RESULT: {success_count}/{segments} segments successful ({success_rate*100:.1f}%) - {result_status}")
+        
+        if overall_success:
+            # Reset lock state
+            self.target_locked = False
+            return True
+        else:
             return False
     
     def _execute_mouse_movement(self, dx, dy):
@@ -497,17 +556,19 @@ class RawInputCompatibleController:
         original_mouse_y = (degrees_y / 360) * (self.dpi * (1 / self.sensitivity))
         original_distance = math.sqrt(original_mouse_x**2 + original_mouse_y**2)
         
-        # Ultra-aggressive speed strategy with 5-tier smooth transitions
-        if pixel_distance <= 6:
-            speed_multiplier = 3.5    # Extreme precision for final lock
-        elif pixel_distance <= 25:
-            speed_multiplier = 4.5    # High speed for close targets
-        elif pixel_distance <= 55:
-            speed_multiplier = 6.0    # Aggressive acceleration
-        elif pixel_distance <= 100:
-            speed_multiplier = 7.0    # Very high speed for distant targets
+        # 优化的速度倍数曲线 - 扩展范围1.0-8.0x，改善中距离速度响应
+        if pixel_distance <= 3:
+            speed_multiplier = 1.0    # 极近距离：精确微调，无需加速
+        elif pixel_distance <= 8:
+            speed_multiplier = 1.8    # 近距离：轻微加速，保持精度 (1.5→1.8)
+        elif pixel_distance <= 20:
+            speed_multiplier = 3.2    # 中近距离：温和加速 (2.5→3.2)
+        elif pixel_distance <= 40:
+            speed_multiplier = 4.8    # 中距离：适中加速 (3.5→4.8)
+        elif pixel_distance <= 80:
+            speed_multiplier = 6.5    # 远距离：较快接近 (4.5→6.5)
         else:
-            speed_multiplier = 8.0    # Maximum speed for extreme distances
+            speed_multiplier = 8.0    # 极远距离：快速接近 (5.5→8.0)
         
         mouse_x = original_mouse_x * speed_multiplier
         mouse_y = original_mouse_y * speed_multiplier
@@ -533,27 +594,29 @@ class RawInputCompatibleController:
         return final_mouse_x, final_mouse_y
     
     def apply_movement_damping(self, mouse_x, mouse_y, pixel_distance):
-        """Apply movement damping to prevent overshoot and oscillation"""
+        """简化的线性阻尼系统 - 优化速度，减少复杂度"""
         original_distance = math.sqrt(mouse_x**2 + mouse_y**2)
         
-        # Extreme damping thresholds - allow very high speed movement
-        damping_threshold_high = 250  # >250px mouse movement needs strong damping
-        damping_threshold_med = 120   # >120px mouse movement needs medium damping
-        damping_threshold_low = 60    # >60px mouse movement needs light damping
-        
-        if original_distance <= damping_threshold_low:
+        # 简化的线性阻尼策略 - 基于距离的线性阻尼
+        # 优化：减少阻尼级别，提高移动速度
+        if original_distance <= 25:
+            # 小移动，无需阻尼，保持精度
             return mouse_x, mouse_y, False
-        elif original_distance <= damping_threshold_med:
-            damping_factor = 0.90  # 10% reduction
-        elif original_distance <= damping_threshold_high:
-            damping_factor = 0.75  # 25% reduction
+        elif original_distance <= 60:
+            # 中等移动，轻微阻尼 (仅2%减少)
+            damping_factor = 0.98
+        elif original_distance <= 120:
+            # 大移动，温和阻尼 (仅8%减少)  
+            damping_factor = 0.92
         else:
-            damping_factor = 0.60  # 40% reduction
+            # 极大移动，中等阻尼 (仅15%减少)
+            damping_factor = 0.85
         
+        # 应用简化阻尼 - 移除重复的分段逻辑，由主分段系统处理
         damped_x = mouse_x * damping_factor
         damped_y = mouse_y * damping_factor
         
-        return damped_x, damped_y, True
+        return damped_x, damped_y, damping_factor < 1.0
     
     def handle_no_target(self):
         """Handle no target situation"""

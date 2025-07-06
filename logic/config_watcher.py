@@ -80,6 +80,11 @@ class Config():
         self.enable_raw_input_bypass = self.config_Mouse.getboolean("enable_raw_input_bypass")
         self.raw_input_debug_logging = self.config_Mouse.getboolean("raw_input_debug_logging")
         
+        # Smooth movement settings
+        self.smooth_movement_enabled = self.config_Mouse.getboolean("smooth_movement_enabled")
+        self.max_single_move_distance = int(self.config_Mouse["max_single_move_distance"])
+        self.segment_movement_delay = int(self.config_Mouse["segment_movement_delay"])
+        
         # Shooting
         self.config_Shooting = self.config["Shooting"]
         self.auto_shoot = self.config_Shooting.getboolean("auto_shoot")

@@ -1,0 +1,59 @@
+"""
+简化的鼠标控制接口
+为 frame_parser_simple.py 提供兼容性接口
+基于 mouse_new_raw_input_fixed.py 但针对性能优化
+"""
+
+import time
+
+# 全局鼠标控制器实例
+_mouse_controller = None
+
+def get_mouse_controller():
+    """获取全局鼠标控制器实例"""
+    global _mouse_controller
+    if _mouse_controller is None:
+        from logic.mouse_new_raw_input_fixed import RawInputCompatibleController
+        _mouse_controller = RawInputCompatibleController()
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ✅ mouse_simple: 鼠标控制器已初始化")
+    return _mouse_controller
+
+class MouseSimple:
+    """简化的鼠标控制类 - 提供兼容性接口"""
+    
+    def __init__(self):
+        self.controller = get_mouse_controller()
+        print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ✅ mouse_simple: MouseSimple 接口已创建")
+    
+    def process_data(self, data):
+        """处理YOLO检测数据 - 兼容性接口"""
+        return self.controller.process_data(data)
+    
+    def process_target(self, target_x, target_y, target_w=0, target_h=0, target_cls=0):
+        """处理检测到的目标 - 兼容性接口"""
+        return self.controller.process_target(target_x, target_y, target_w, target_h, target_cls)
+    
+    def handle_no_target(self):
+        """处理无目标情况 - 兼容性接口"""
+        return self.controller.handle_no_target()
+    
+    @property
+    def mouse_available(self):
+        """检查鼠标是否可用 - 兼容性接口"""
+        return self.controller.mouse_available
+    
+    @property
+    def auto_aim(self):
+        """自动瞄准状态 - 兼容性接口"""
+        return self.controller.auto_aim
+    
+    @property
+    def auto_shoot(self):
+        """自动射击状态 - 兼容性接口"""
+        return self.controller.auto_shoot
+
+# 创建全局鼠标实例供导入使用
+mouse = MouseSimple()
+
+# 模块初始化日志
+print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} - ✅ mouse_simple: 模块已加载，全局mouse实例已创建")
