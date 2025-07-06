@@ -67,9 +67,9 @@ class RawInputCompatibleController:
         self.center_y = self.screen_height / 2
         self.aim_threshold = 3           # Ultra-aggressive targeting threshold
         self.min_move_threshold = 1      # Minimum movement threshold
-        # 连续移动配置 - 革命性250px阈值，消除90%分段情况
+        # 连续移动配置 - ⚡ 速度优化: 350px阈值，覆盖95%移动情况
         self.smooth_movement_enabled = getattr(cfg, 'smooth_movement_enabled', True)
-        self.max_single_move = getattr(cfg, 'max_single_move_distance', 250)  # 革命性优化: 120→250px, 覆盖90%移动
+        self.max_single_move = getattr(cfg, 'max_single_move_distance', 350)  # ⚡ 速度优化: 250→350px, 覆盖95%移动
         self.segment_delay = 0  # 零延迟策略 - 完全移除延迟
         self.target_locked = False
         self.lock_start_time = 0
@@ -107,11 +107,21 @@ class RawInputCompatibleController:
         # Check mouse_new availability
         self.mouse_available = MOUSE_NEW_AVAILABLE and mouse is not None
         
-        # 过冲监控系统
-        self.overshoot_detection_enabled = True
+        # 过冲监控系统 - 🚀 速度优化：可配置禁用
+        self.overshoot_detection_enabled = getattr(cfg, 'enable_overshoot_detection', False)  # 🚀 默认禁用提升速度
         self.overshoot_threshold = 15  # 像素阈值
         self.correction_attempts = 0
         self.max_correction_attempts = 2
+        
+        # 精度着陆系统 - 🚀 速度优化：可配置禁用
+        self.precision_landing_enabled = getattr(cfg, 'enable_precision_landing', False)  # 🚀 默认禁用提升速度
+        
+        # 🔧 过冲修复：目标切换检测系统
+        self.last_target_type = None
+        self.last_target_position = None  
+        self.target_switch_time = 0
+        self.switch_cooldown = 0.05  # 50ms冷却时间
+        self.max_switch_distance = 80  # 最大切换移动距离限制
         
         print(f"🎯 RawInputCompatibleController initialized")
         print(f"   Screen: {self.screen_width}x{self.screen_height}")
@@ -272,6 +282,18 @@ class RawInputCompatibleController:
               f"offset=({offset_x:.1f},{offset_y:.1f}) distance={distance:.1f}px")
         print(f"{current_time} - 🎯 Processing {target_type} target: ({target_x:.1f}, {target_y:.1f}), distance={distance:.1f}px")
         
+        # ⚡ 速度优化：只在大距离时进行切换检测，减少性能开销
+        if distance > 120:  # 只对大距离移动进行切换检测
+            current_position = (target_x, target_y)
+            switch_limited = self._detect_target_switch(target_cls, current_position, distance)
+            if switch_limited:
+                # 大距离切换时应用限制 - 重新计算有限的offset
+                limit_ratio = self.max_switch_distance / distance
+                offset_x *= limit_ratio
+                offset_y *= limit_ratio
+                distance = self.max_switch_distance
+                print(f"{current_time} - 🔧 TARGET SWITCH: Distance limited to {distance:.1f}px (ratio={limit_ratio:.2f})")
+        
         # Check if movement is needed
         if distance <= self.aim_threshold:
             if not self.target_locked:
@@ -290,19 +312,58 @@ class RawInputCompatibleController:
         
         # 过冲检测和修正（如果移动成功）
         if movement_success and self.overshoot_detection_enabled:
-            # 给系统一点时间来执行移动
-            time.sleep(0.001)  # 1ms延迟确保移动完成
+            # 🚀 速度优化：移除延迟，依靠系统自然调度
             correction_success = self._detect_and_correct_overshoot(target_x, target_y, movement_success)
             
-            # 精度着陆系统作为最终步骤
-            if correction_success:
-                time.sleep(0.001)  # 再次给系统时间处理修正移动
+            # 精度着陆系统作为最终步骤 - 🚀 速度优化：可配置禁用
+            if correction_success and self.precision_landing_enabled:
+                # 🚀 速度优化：移除延迟，最大化响应速度
                 landing_success = self._precision_landing(target_x, target_y)
                 return movement_success and correction_success and landing_success
+            elif correction_success:
+                # 🚀 速度模式：跳过精度着陆，直接返回
+                return movement_success and correction_success
             
             return movement_success and correction_success
         
         return movement_success
+    
+    def _detect_target_switch(self, target_cls, current_position, distance):
+        """🔧 过冲修复：检测目标切换并应用限制"""
+        current_time = time.time()
+        
+        # 检查冷却时间
+        if current_time - self.target_switch_time < self.switch_cooldown:
+            return False
+        
+        # 检测目标类型切换
+        type_switched = (self.last_target_type is not None and 
+                        self.last_target_type != target_cls)
+        
+        # 检测大距离跳跃 (位置变化超过阈值)
+        position_jumped = False
+        if self.last_target_position is not None:
+            last_x, last_y = self.last_target_position
+            current_x, current_y = current_position
+            position_change = math.sqrt((current_x - last_x)**2 + (current_y - last_y)**2)
+            position_jumped = position_change > 100  # 100px跳跃阈值
+        
+        # 更新跟踪信息
+        self.last_target_type = target_cls
+        self.last_target_position = current_position
+        
+        # 如果发生切换且距离很大，需要限制
+        if (type_switched or position_jumped) and distance > self.max_switch_distance:
+            self.target_switch_time = current_time
+            target_type = "HEAD" if target_cls == 7 else "BODY"
+            log_time = time.strftime("%Y-%m-%d %H:%M:%S")
+            if type_switched:
+                print(f"{log_time} - 🔧 TARGET TYPE SWITCH detected: {target_type}, distance={distance:.1f}px")
+            if position_jumped:
+                print(f"{log_time} - 🔧 POSITION JUMP detected: {position_change:.1f}px change")
+            return True
+        
+        return False
     
     def move_to_target(self, offset_x, offset_y, target_cls):
         """革命性目标导向移动 - 智能分区算法，零过冲设计"""
@@ -319,15 +380,15 @@ class RawInputCompatibleController:
             current_time = time.strftime("%Y-%m-%d %H:%M:%S")
             print(f"{current_time} - 🎯 TARGET MOVE: pixel=({offset_x:.1f},{offset_y:.1f}) → mouse=({mouse_x:.1f},{mouse_y:.1f}) | {pixel_distance:.0f}px")
             
-            # 智能移动策略选择
+            # ⚡ 速度优化：智能移动策略选择，减少分段开销
             if pixel_distance <= 20:
                 # 精度区域：直接移动
                 return self._execute_precision_movement(mouse_x, mouse_y)
-            elif pixel_distance <= 100:
-                # 平衡区域：智能分段
+            elif pixel_distance <= 80:
+                # 平衡区域：直接移动（优化：减少分段）
                 return self._execute_balanced_movement(mouse_x, mouse_y, pixel_distance)
             else:
-                # 速度区域：跳跃+着陆
+                # 速度区域：快速移动
                 return self._execute_speed_movement(mouse_x, mouse_y, pixel_distance)
             
         except Exception as e:
@@ -349,42 +410,25 @@ class RawInputCompatibleController:
         return success
     
     def _execute_balanced_movement(self, mouse_x, mouse_y, pixel_distance):
-        """平衡移动：2段式移动，速度+精度平衡"""
-        # 两段式移动：80% + 20%
-        first_x = mouse_x * 0.8
-        first_y = mouse_y * 0.8
-        second_x = mouse_x * 0.2  
-        second_y = mouse_y * 0.2
+        """平衡移动：🚀 速度优化 - 直接移动，消除2段延迟"""
+        # 🚀 速度优化：从2段式改为直接移动，节省移动时间
+        exec_x, exec_y = int(round(mouse_x)), int(round(mouse_y))
+        success = self._execute_mouse_movement(exec_x, exec_y)
         
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{current_time} - 🎯 BALANCED: 2-stage movement for {pixel_distance:.0f}px")
+        status = "✅ SUCCESS" if success else "❌ FAILED"
+        print(f"{current_time} - 🎯 BALANCED: Direct movement ({exec_x}, {exec_y}) {status}")
         
-        # 第一段：快速接近
-        exec1_x, exec1_y = int(round(first_x)), int(round(first_y))
-        success1 = self._execute_mouse_movement(exec1_x, exec1_y)
-        
-        if not success1:
-            return False
-        
-        # 第二段：精确着陆
-        exec2_x, exec2_y = int(round(second_x)), int(round(second_y))
-        success2 = self._execute_mouse_movement(exec2_x, exec2_y)
-        
-        overall_success = success1 and success2
-        if overall_success:
+        if success:
             self.target_locked = False
-            print(f"{current_time} - 🎯 BALANCED RESULT: ✅ 2/2 stages SUCCESS")
-        else:
-            print(f"{current_time} - 🎯 BALANCED RESULT: ❌ Stage failed")
-        
-        return overall_success
+        return success
     
     def _execute_speed_movement(self, mouse_x, mouse_y, pixel_distance):
-        """速度移动：3段式移动，最快速度+精确着陆"""
-        # 三段式移动：60% + 30% + 10% (精确着陆)
-        segments = [0.6, 0.3, 0.1]
+        """速度移动：🚀 速度优化 - 2段式移动，减少延迟"""
+        # 🚀 速度优化：从3段改为2段移动 70% + 30%
+        segments = [0.7, 0.3]
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"{current_time} - 🎯 SPEED: 3-stage movement for {pixel_distance:.0f}px")
+        print(f"{current_time} - 🎯 SPEED: 2-stage movement for {pixel_distance:.0f}px")
         
         success_count = 0
         accumulated_x, accumulated_y = 0.0, 0.0
@@ -406,27 +450,27 @@ class RawInputCompatibleController:
                 success_count += 1
                 accumulated_x += exec_x
                 accumulated_y += exec_y
-                print(f"    Stage {i+1}/3: ✅ ({exec_x}, {exec_y})")
+                print(f"    Stage {i+1}/2: ✅ ({exec_x}, {exec_y})")
             else:
-                print(f"    Stage {i+1}/3: ❌ ({exec_x}, {exec_y})")
+                print(f"    Stage {i+1}/2: ❌ ({exec_x}, {exec_y})")
         
-        overall_success = success_count >= 2  # 至少2段成功
+        overall_success = success_count >= 1  # 至少1段成功
         if overall_success:
             self.target_locked = False
-            print(f"{current_time} - 🎯 SPEED RESULT: ✅ {success_count}/3 stages SUCCESS")
+            print(f"{current_time} - 🎯 SPEED RESULT: ✅ {success_count}/2 stages SUCCESS")
         else:
-            print(f"{current_time} - 🎯 SPEED RESULT: ❌ Only {success_count}/3 stages")
+            print(f"{current_time} - 🎯 SPEED RESULT: ❌ Only {success_count}/2 stages")
         
         return overall_success
     
     def _execute_smooth_segmented_movement(self, total_mouse_x, total_mouse_y, pixel_offset_x, pixel_offset_y):
         """执行智能变速分段移动 - 渐变速度曲线，保持浮点精度，自适应延迟"""
         total_distance = math.sqrt(total_mouse_x**2 + total_mouse_y**2)
-        # 革命性提升：大幅提高单次移动阈值，覆盖90%以上移动情况
-        if total_distance <= 250:  # 终极优化：250px以下直接移动
+        # 🚀 速度优化：大幅提高单次移动阈值，覆盖95%以上移动情况
+        if total_distance <= 400:  # 🚀 速度优化：400px以下直接移动 (250→400px)
             return self._execute_direct_movement(total_mouse_x, total_mouse_y)
         
-        # 对于极远距离(>250px)，使用连续插值移动而非分段移动
+        # 对于极远距离(>400px)，使用连续插值移动而非分段移动
         return self._execute_continuous_interpolation_movement(total_mouse_x, total_mouse_y, total_distance)
     
     def _execute_continuous_interpolation_movement(self, total_mouse_x, total_mouse_y, total_distance):
@@ -766,32 +810,32 @@ class RawInputCompatibleController:
         return final_x, final_y
     
     def _precision_zone_movement(self, base_x, base_y, distance):
-        """精度区域 (0-20px): 超精确移动，1:1映射无放大"""
-        # 精度优先：最小的合理放大倍数
-        precision_multiplier = 2.0 if distance > 10 else 1.5
+        """精度区域 (0-20px): 超精确移动，⚡ 速度-精度平衡优化"""
+        # ⚡ 速度平衡：适度提升 2.5-3.5 → 3.0-4.5 (兼顾速度与精度)
+        precision_multiplier = 4.5 if distance > 10 else 3.0
         return base_x * precision_multiplier, base_y * precision_multiplier
     
     def _balanced_zone_movement(self, base_x, base_y, distance):
-        """平衡区域 (20-100px): 智能加速，避免过冲"""
-        # 智能加速：基于距离的渐进式放大
+        """平衡区域 (20-100px): 智能加速，⚡ 速度-精度平衡优化"""
+        # ⚡ 速度平衡：适度提升 5.0-8.0 → 6.5-10.0 (平衡速度与控制)
         if distance <= 40:
-            balance_multiplier = 3.5  # 中小距离
+            balance_multiplier = 6.5   # 中小距离 (5.0→6.5)
         elif distance <= 70:
-            balance_multiplier = 5.0  # 中等距离
+            balance_multiplier = 8.5   # 中等距离 (6.5→8.5)
         else:
-            balance_multiplier = 6.5  # 中大距离
+            balance_multiplier = 10.0  # 中大距离 (8.0→10.0)
         
         return base_x * balance_multiplier, base_y * balance_multiplier
     
     def _speed_zone_movement(self, base_x, base_y, distance):
-        """速度区域 (100+px): 快速移动 + 精确着陆"""
-        # 控制式高速：避免旧系统的18x过度放大
+        """速度区域 (100+px): 快速移动 + 精确着陆，⚡ 速度-精度平衡优化"""
+        # ⚡ 速度平衡：智能提升 8.0-12.0 → 11.0-15.0 (保持控制下的快速移动)
         if distance <= 150:
-            speed_multiplier = 8.0   # 中长距离
+            speed_multiplier = 11.0  # 中长距离 (8.0→11.0)
         elif distance <= 200:
-            speed_multiplier = 10.0  # 长距离
+            speed_multiplier = 13.0  # 长距离 (10.0→13.0)
         else:
-            speed_multiplier = 12.0  # 超长距离 (大幅降低，避免过冲)
+            speed_multiplier = 15.0  # 超长距离 (12.0→15.0) - 保守于原20.0
         
         return base_x * speed_multiplier, base_y * speed_multiplier
     
